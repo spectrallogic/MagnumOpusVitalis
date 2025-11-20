@@ -1,5 +1,5 @@
 """
-The Showdown: ExpandFormer v19 vs. Standard Static Transformer
+The Showdown: Magnum Opus vs. Standard Static Transformer
 ================================================================
 COMPARING:
 1. "Standard Static": A fixed-size GPT-2 style model (Industry Standard).
@@ -29,7 +29,7 @@ import sys
 
 # Import your invention
 try:
-    import expandformer_v19 as magnum_opus
+    import magnum_opus as magnum_opus
 except ImportError:
     print("❌ Error: Could not find 'magnum_opus.py'. Please make sure it exists.")
     sys.exit(1)

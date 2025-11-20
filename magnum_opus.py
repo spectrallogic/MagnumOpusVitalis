@@ -1,5 +1,5 @@
 """
-Magnum Opus v20 (Fixed): The "Lean" Living Intelligence
+Magnum Opus
 ====================================================================
 FIXES:
 1.  Crash Fix: Handles 1-word inputs (like "test") without breaking.
