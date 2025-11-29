@@ -47,7 +47,7 @@ from typing import Optional, List, Dict, Tuple
 # 🛡️ CONFIGURATION FLAGS
 # ============================================================================
 
-ENABLE_RAW_AUDIO_OUTPUT = False  # Set True if sounddevice works
+ENABLE_RAW_AUDIO_OUTPUT = True  # Set True if sounddevice works
 ENABLE_RAW_MICROPHONE = False    # Set True if sounddevice works
 ENABLE_TTS = True                # Text-to-speech via pyttsx3
 ENABLE_STT = True                # Speech-to-text via speech_recognition
@@ -251,6 +251,91 @@ class GrowthStats:
     samples: int = 0
 
 
+@dataclass
+class ClusterKnowledge:
+    """
+    Track confidence and performance per cluster (topic area).
+
+    KEY INSIGHT: Each cluster represents a "topic" in latent space.
+    We track how well the AI performs in each topic to decide:
+    - When to use LLM scaffold (low confidence)
+    - When to use own voice (high confidence)
+
+    This enables GRADUAL, PER-TOPIC independence from the LLM.
+    """
+    cluster_id: int
+    recent_losses: deque = field(default_factory=lambda: deque(maxlen=50))
+    prediction_attempts: int = 0
+    prediction_successes: int = 0  # When own prediction was "good enough"
+    llm_assists: int = 0  # Times we used LLM for this cluster
+    own_responses: int = 0  # Times we used own voice
+    total_samples: int = 0
+
+    @property
+    def confidence(self) -> float:
+        """
+        0.0 = no confidence (always use LLM)
+        1.0 = fully confident (always use own voice)
+
+        Based on:
+        - Recent prediction loss (lower = more confident)
+        - Sample count (need enough data)
+        - Success rate of own predictions
+        """
+        if self.total_samples < 20:
+            return 0.0  # Not enough experience in this topic
+
+        if len(self.recent_losses) < 10:
+            return 0.1  # Barely any data
+
+        # Average recent loss - lower is better
+        avg_loss = sum(self.recent_losses) / len(self.recent_losses)
+        loss_confidence = max(0.0, 1.0 - (avg_loss / 4.0))  # Loss of 4+ = 0 confidence
+
+        # Success rate of predictions
+        if self.prediction_attempts > 0:
+            success_rate = self.prediction_successes / self.prediction_attempts
+        else:
+            success_rate = 0.0
+
+        # Blend: 60% loss-based, 40% success-based
+        raw_confidence = 0.6 * loss_confidence + 0.4 * success_rate
+
+        # Require minimum samples for high confidence
+        sample_factor = min(1.0, self.total_samples / 100)  # Full confidence needs 100+ samples
+
+        return raw_confidence * sample_factor
+
+    @property
+    def should_use_llm(self) -> bool:
+        """Quick check: should we use LLM for this cluster?"""
+        return self.confidence < 0.4
+
+    @property
+    def can_try_own_voice(self) -> bool:
+        """Can we attempt our own response (even if we also check LLM)?"""
+        return self.confidence > 0.2 and self.total_samples > 30
+
+    def record_loss(self, loss: float):
+        """Record a training loss for this cluster."""
+        self.recent_losses.append(loss)
+        self.total_samples += 1
+
+    def record_prediction_result(self, was_good: bool):
+        """Record whether our prediction was acceptable."""
+        self.prediction_attempts += 1
+        if was_good:
+            self.prediction_successes += 1
+
+    def record_llm_assist(self):
+        """Record that we used LLM for this cluster."""
+        self.llm_assists += 1
+
+    def record_own_response(self):
+        """Record that we used our own voice for this cluster."""
+        self.own_responses += 1
+
+
 class TabularRasaVocabulary:
     """Dynamic vocabulary that learns new words."""
 
@@ -284,19 +369,32 @@ class EnergySystem:
     """Energy economics - speaking costs energy."""
 
     def __init__(self):
-        self.energy = 1.0
+        self.energy = 0.7  # Start at 70%, not full
         self.conservation_gain = 0.5
+        self.regen_counter = 0  # Slow down regeneration
 
     def can_speak(self) -> bool:
-        return self.energy > 0.1
+        return self.energy > 0.15
 
     def spend_speaking(self, num_words: int = 1):
-        cost = 0.03 * (1.5 - self.conservation_gain) * num_words
-        self.energy = max(0.0, self.energy - cost)
+        # Speaking is EXPENSIVE - base cost + per word
+        base_cost = 0.08
+        word_cost = 0.02 * num_words
+        total_cost = (base_cost + word_cost) * (1.2 - self.conservation_gain * 0.4)
+        self.energy = max(0.0, self.energy - total_cost)
+        print(f"[ENERGY] Spent {total_cost:.3f} for {num_words} words, remaining: {self.energy:.2f}")
+
+    def spend_thinking(self):
+        """Small cost just for processing each frame"""
+        self.energy = max(0.0, self.energy - 0.001)
 
     def regenerate(self):
-        regen = 0.015 * (0.5 + self.conservation_gain)
-        self.energy = min(1.0, self.energy + regen)
+        # Only regenerate every few frames, and slowly
+        self.regen_counter += 1
+        if self.regen_counter >= 5:  # Every 5 frames
+            self.regen_counter = 0
+            regen = 0.003 * (0.5 + self.conservation_gain * 0.5)
+            self.energy = min(1.0, self.energy + regen)
 
 
 class SessionLogger:
@@ -824,9 +922,12 @@ class PrefrontalCortex(nn.Module):
         )
 
         # Initialize biases for scaffold dependence
+        # Higher bias = sigmoid outputs closer to 1.0
         with torch.no_grad():
-            self.policy[0].bias[6] = 2.0  # llm_reliance starts high
-            self.policy[0].bias[7] = 2.0  # tts_gate starts high
+            self.policy[0].bias[6] = 3.5  # llm_reliance starts VERY high (~0.97)
+            self.policy[0].bias[7] = 2.5  # tts_gate starts high (~0.92)
+            self.policy[0].bias[3] = 1.0  # speak_impulse moderate (~0.73)
+            self.policy[0].bias[5] = 0.0  # energy_conservation neutral (~0.5)
 
     def forward(self, h: torch.Tensor, stress: float, energy: float,
                 prev_state: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -903,7 +1004,7 @@ class OmniBrain(nn.Module):
         self.pfc_state: Optional[torch.Tensor] = None
         self.growth_pressure = 0.0
         self.growth_threshold = 4.5
-        self.growth_patience = 80
+        self.growth_patience = 200
         self.steps_above_threshold = 0
         self.current_cluster = 0
 
@@ -1135,11 +1236,11 @@ class EmotionalSyrinx:
             output += cry
 
         # Layer 3: Speech (data transmission)
-        if speak_impulse > 0.4:
-            freq_mod = 600.0 + 300.0 * np.sin(2 * np.pi * (10 + chaos * 50) * t + self.data_phase)
-            speech = np.sign(np.sin(2 * np.pi * freq_mod * t)) * speak_impulse * 0.4
-            self.data_phase += 0.2
-            output += speech
+        #if speak_impulse > 0.4:
+            #freq_mod = 100.0 + 300.0 * np.sin(2 * np.pi * (10 + chaos * 50) * t + self.data_phase)
+            #speech = np.sign(np.sin(2 * np.pi * freq_mod * t)) * speak_impulse * 0.4
+            #self.data_phase += 0.2
+            #output += speech
 
         # Layer 4: Growth sound
         if self.growth_countdown > 0:
@@ -1461,26 +1562,41 @@ class VitalisWorker(QThread):
                 speak_drive = outputs['speak_drive'].item()
                 self.is_speaking = False
 
+                # ALWAYS respond to user input (EXTERNAL)
                 if input_source == "EXTERNAL" and user_msg and self.energy.can_speak():
-                    if self.llm_reliance > 0.3:
+                    print(f"[RESPONSE] User said: '{user_msg}' | LLM reliance: {self.llm_reliance:.2f} | Energy: {self.energy.energy:.2f}")
+
+                    if self.llm_reliance > 0.2:  # Lowered threshold for COCOON mode
                         # Cocoon mode: use scaffold LLM
                         ai_msg = self.scaffold_llm.chat(user_msg)
                         if ai_msg:
                             self.is_speaking = True
                             self.energy.spend_speaking(len(ai_msg.split()))
                             self.vocab.learn_text(ai_msg)
-                            if self.scaffold_tts.available and self.tts_gate > 0.4:
+                            print(f"[COCOON] AI responds: {ai_msg[:50]}...")
+                            if self.scaffold_tts.available and self.tts_gate > 0.3:
                                 self.scaffold_tts.speak_async(ai_msg)
-                    elif speak_drive > 0.5:
-                        # Butterfly mode: own voice
-                        idx = torch.argmax(outputs['text_logits'], dim=-1)
-                        words = [self.vocab.idx2word[i.item()] for i in idx.flatten()
-                                 if i.item() < len(self.vocab.idx2word)]
-                        ai_msg = " ".join(words[:10])
-                        if ai_msg and len(ai_msg) > 2:
+                        else:
+                            # LLM failed, try own voice
+                            ai_msg = self._generate_own_response(outputs)
+                    else:
+                        # Butterfly mode: own voice (regardless of speak_drive for user input)
+                        ai_msg = self._generate_own_response(outputs)
+                        if ai_msg:
                             self.is_speaking = True
                             self.energy.spend_speaking(len(ai_msg.split()))
+                            print(f"[BUTTERFLY] AI responds: {ai_msg}")
 
+                # Spontaneous speech (not triggered by user) - requires higher drive
+                elif speak_drive > 0.7 and self.energy.can_speak() and len(self.vocab) > 20:
+                    ai_msg = self._generate_own_response(outputs)
+                    if ai_msg:
+                        self.is_speaking = True
+                        self.energy.spend_speaking(len(ai_msg.split()))
+                        print(f"[SPONTANEOUS] AI says: {ai_msg}")
+
+                # Spend small energy just for thinking
+                self.energy.spend_thinking()
                 self.energy.regenerate()
 
                 # Update voice params
@@ -1548,6 +1664,29 @@ class VitalisWorker(QThread):
         self.pacman.running = False
         self.pacman.wait()
         print("[WORKER] Shutdown complete")
+
+    def _generate_own_response(self, outputs) -> Optional[str]:
+        """Generate response using the AI's own learned vocabulary."""
+        try:
+            if len(self.vocab) < 5:
+                return None
+
+            idx = torch.argmax(outputs['text_logits'], dim=-1)
+            words = []
+            for i in idx.flatten():
+                if i.item() < len(self.vocab.idx2word):
+                    word = self.vocab.idx2word[i.item()]
+                    words.append(word)
+
+            # Take first 10 unique-ish words
+            response = " ".join(words[:10])
+
+            if response and len(response) > 2:
+                return response
+            return None
+        except Exception as e:
+            print(f"[OWN_VOICE] Error generating response: {e}")
+            return None
 
     def _audio_callback(self, outdata, frames, time_info, status):
         """Audio output callback."""
@@ -2074,10 +2213,31 @@ class MainWindow(QMainWindow):
 # ============================================================================
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("MAGNUMOPUSVITALIS v2.0 - Genesis Unified")
-    print("A seed that grows, not a machine that thinks.")
-    print("=" * 60)
+    print("=" * 70)
+    print("  MAGNUMOPUSVITALIS v2.0 - Genesis Unified")
+    print("  'A seed that grows, not a machine that thinks.'")
+    print("=" * 70)
+    print()
+    print("📋 STARTUP CHECKLIST:")
+    print(f"  • PyTorch: {'✅ CUDA' if torch.cuda.is_available() else '⚠️ CPU only'}")
+    print(f"  • LLM Scaffold: {'✅ Available' if SCAFFOLD_LLM_AVAILABLE else '❌ Not installed'}")
+    print(f"  • STT Scaffold: {'✅ Available' if SCAFFOLD_STT_AVAILABLE else '❌ Not installed'}")
+    print(f"  • TTS Scaffold: {'✅ Available' if SCAFFOLD_TTS_AVAILABLE else '❌ Not installed'}")
+    print(f"  • Audio Output: {'✅ Enabled' if ENABLE_RAW_AUDIO_OUTPUT else '⚪ Disabled'}")
+    print(f"  • Microphone: {'✅ Enabled' if ENABLE_RAW_MICROPHONE else '⚪ Disabled'}")
+    print()
+    print("🎯 HOW TO INTERACT:")
+    print("  • Type in the COMM LINK box and press Enter")
+    print("  • Drop .txt files in 'training_data/' folder for learning")
+    print("  • Watch the orb react to your input!")
+    print()
+    print("🧠 MODES:")
+    print("  • COCOON: AI uses GPT-2 scaffold for responses (early stage)")
+    print("  • BUTTERFLY: AI uses its own learned vocabulary (mature stage)")
+    print()
+    print("=" * 70)
+    print("Starting UI...")
+    print()
 
     app = QApplication(sys.argv)
     window = MainWindow()
