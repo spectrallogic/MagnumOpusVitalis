@@ -240,7 +240,7 @@ def mode_hybrid(agent):
     def background_feeder():
         processed = set()
         while not stop_event.is_set():
-            path = Path("training_data")
+            path = Path("../training_data")
             if path.exists():
                 for file in path.glob("*.txt"):
                     if file.name not in processed:

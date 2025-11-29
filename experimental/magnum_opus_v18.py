@@ -255,7 +255,7 @@ class Pacman(QThread):
         seen = set()
         while self.running:
             # 1. Local Files
-            if os.path.exists("training_data"):
+            if os.path.exists("../training_data"):
                 for f in glob.glob("training_data/*.txt"):
                     if f not in seen:
                         try:
