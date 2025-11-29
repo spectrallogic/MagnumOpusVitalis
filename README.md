@@ -6,7 +6,7 @@
 
 
 <div align="center">
-  <img src="media/BabyASI.png" alt="ArtificialSentience - Baby ASI" width="600"/>
+  <img src="media/magnumopus.gif" alt="ArtificialSentience - Baby ASI" width="300"/>
 </div>
 
 ---
