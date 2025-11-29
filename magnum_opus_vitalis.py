@@ -1193,10 +1193,10 @@ class OmniBrain(nn.Module):
 
 class EmotionalSyrinx:
     """
-    Voice synthesizer with emotional layers:
-    1. Drone - Base thinking hum
-    2. Crying - Distress vocalization (learnable suppression)
-    3. Speech - Data transmission tones
+    Voice synthesizer with biological & mechanical layers:
+    1. Drone - Base metabolic hum (Thinking)
+    2. Cry - Distress signal (Baby-like harmonics)
+    3. Droid - FM Synthesis tones (R2-D2 style language)
     4. Growth - One-shot expansion sound
     """
 
@@ -1220,31 +1220,70 @@ class EmotionalSyrinx:
         t = np.arange(frames) / self.fs
         output = np.zeros(frames)
 
-        # Layer 1: Thinking drone (55-110Hz)
+        # === Layer 1: Thinking Drone (The "Heartbeat") ===
+        # Pitch rises with tension (55Hz -> 110Hz)
         target_freq = 55.0 + (tension * 55.0)
         self.base_freq = 0.95 * self.base_freq + 0.05 * target_freq
         drone = np.sin(2 * np.pi * self.base_freq * t + self.phase) * 0.08
         self.phase += 2 * np.pi * self.base_freq * (frames / self.fs)
         output += drone
 
-        # Layer 2: Crying (stress response, learnable suppression)
+        # === Layer 2: Biological Cry (Infant-like) ===
+        # Triggered by Stress. Suppressed by Learning.
+        # Math: Higher pitch (450Hz) + Second Harmonic (nasal quality) + Faster vibrato
         cry_amount = max(0, stress - 0.4) * (1.0 - cry_suppression)
+
         if cry_amount > 0.05:
-            cry_freq = 300 + 100 * np.sin(self.cry_phase)
-            cry = np.sin(2 * np.pi * cry_freq * t) * cry_amount * 0.15
-            self.cry_phase += 0.1
-            output += cry
+            # Vibrato speed increases with stress (panic)
+            vibrato_speed = 0.15 + (stress * 0.1)
 
-        # Layer 3: Speech (data transmission)
-        #if speak_impulse > 0.4:
-            #freq_mod = 100.0 + 300.0 * np.sin(2 * np.pi * (10 + chaos * 50) * t + self.data_phase)
-            #speech = np.sign(np.sin(2 * np.pi * freq_mod * t)) * speak_impulse * 0.4
-            #self.data_phase += 0.2
-            #output += speech
+            # Base cry pitch 450-600Hz (Infant range)
+            cry_freq = 450.0 + 150.0 * np.sin(self.cry_phase)
 
-        # Layer 4: Growth sound
+            # Mix fundamental + 2nd harmonic for that "nasal/baby" timbre
+            cry_wave = (0.7 * np.sin(2 * np.pi * cry_freq * t) +
+                        0.3 * np.sin(2 * np.pi * cry_freq * 2 * t))
+
+            output += cry_wave * cry_amount * 0.15
+            self.cry_phase += vibrato_speed
+
+        # === Layer 3: Droid Syntax (The "Voice") ===
+        # Triggered by Speak Impulse. Modulated by Chaos.
+        # This gives the AI "access" to tones.
+        # Low Chaos = Pure Whistles (Curious/Happy)
+        # High Chaos = Jittery Bleeps (Excited/Urgent)
+
+        if speak_impulse > 0.1:  # Lower threshold so it can "whisper"
+
+            # Carrier Freq: The main pitch of the whistle
+            # Glides based on chaos (creates the "sliding" whistle sound)
+            carrier_freq = 600.0 + 800.0 * np.sin(self.data_phase * 0.3)
+
+            # Modulator: Creates the texture
+            # High chaos = Faster modulation (metallic bleeps)
+            mod_freq = 30.0 + (chaos * 300.0)
+
+            # Index: How "deep" the modulation is
+            mod_index = 2.0 + (chaos * 8.0)
+
+            # FM Synthesis: sin(Carrier + Index * sin(Modulator))
+            fm_tone = np.sin(
+                2 * np.pi * carrier_freq * t +
+                mod_index * np.sin(2 * np.pi * mod_freq * t)
+            )
+
+            # Envelope: Breathy pulses (makes it sound like syllables)
+            envelope = 0.5 + 0.5 * np.sin(self.data_phase * 8.0)
+
+            output += fm_tone * speak_impulse * 0.3 * envelope
+
+            # Advance phase (Speed of talking)
+            self.data_phase += 0.2 + (chaos * 0.3)
+
+        # === Layer 4: Growth Gong (Evolution Event) ===
         if self.growth_countdown > 0:
             growth_t = np.arange(min(frames, self.growth_countdown)) / self.fs
+            # A rich bell tone
             gong_freq = 220 * (1 + 0.5 * np.exp(-growth_t * 5))
             gong = np.sin(2 * np.pi * gong_freq * growth_t) * np.exp(-growth_t * 3) * 0.6
             output[:len(gong)] += gong
