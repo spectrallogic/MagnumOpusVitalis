@@ -286,7 +286,7 @@ pip install sounddevice transformers speech_recognition pyttsx3
 
 ```bash
 # Start the living system
-python magnum_opus_vitalis.py
+python magnum_opus_vitalis_v1_archived.py
 ```
 
 **What happens:**
@@ -304,7 +304,7 @@ python magnum_opus_vitalis.py
 ### Configuration Flags
 
 ```python
-# At top of magnum_opus_vitalis.py
+# At top of magnum_opus_vitalis_v1_archived.py
 ENABLE_RAW_AUDIO_OUTPUT = False  # Syrinx voice
 ENABLE_RAW_MICROPHONE = False    # Audio input
 ENABLE_TTS = True                # Text-to-speech

@@ -2,17 +2,25 @@
 MagnumOpusVitalis: The Living Intelligence
 ================================================================
 ARCHITECT: Alan Hourmand
-VERSION: 1.0 (Genesis)
+VERSION: 2.0 (Genesis Unified)
 
 PHILOSOPHY:
 "A seed that grows, not a machine that thinks."
 
+INTEGRATIONS FROM ARTIFICIALSENTIENCE:
+- ElasticLowRankLayer (low-rank growth with compression)
+- Exploratory Routing (temperature + epsilon-greedy)
+- TemporalConsciousness (specious present - past/present/future)
+- Consolidation mechanisms (protected bases)
+- GoalSystem integration
+
 CORE PRINCIPLES:
 1. TABULA RASA - Starts knowing nothing, learns everything
 2. MULTI-SCALE ABSTRACTION - Fast pattern recognition, slow understanding
-3. ORGANIC GROWTH - Expands only when confused
+3. ORGANIC GROWTH - Expands only when confused (low-rank growth)
 4. UNIFIED MEMORY - Memory IS the model, not separate
 5. ENERGY ECONOMICS - Speaking costs energy, silence recovers
+6. TEMPORAL CONSCIOUSNESS - Aware of past/present/future simultaneously
 
 NO HARDCODED KNOWLEDGE. NO CHEATING.
 """
@@ -28,7 +36,6 @@ import os
 import glob
 import numpy as np
 import cv2
-import sounddevice as sd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -37,10 +44,34 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple
 
 # ============================================================================
+# 🛡️ CONFIGURATION FLAGS
+# ============================================================================
+
+ENABLE_RAW_AUDIO_OUTPUT = False  # Set True if sounddevice works
+ENABLE_RAW_MICROPHONE = False    # Set True if sounddevice works
+ENABLE_TTS = True                # Text-to-speech via pyttsx3
+ENABLE_STT = True                # Speech-to-text via speech_recognition
+
+# Windows COM fix for TTS
+TRY_COM_FIX = False
+try:
+    import pythoncom
+    TRY_COM_FIX = True
+except ImportError:
+    pass
+
+# Optional audio
+try:
+    import sounddevice as sd
+    SOUNDDEVICE_AVAILABLE = True
+except ImportError:
+    SOUNDDEVICE_AVAILABLE = False
+    print("[SYSTEM] sounddevice not available - audio disabled")
+
+# ============================================================================
 # 🥚 SCAFFOLD SYSTEMS (Training Wheels)
 # ============================================================================
 
-# Try to import optional scaffold dependencies
 SCAFFOLD_LLM_AVAILABLE = False
 SCAFFOLD_STT_AVAILABLE = False
 SCAFFOLD_TTS_AVAILABLE = False
@@ -52,32 +83,27 @@ try:
 except ImportError:
     print("[SCAFFOLD] LLM not available - install: pip install transformers")
 
-try:
-    import speech_recognition as sr
-    SCAFFOLD_STT_AVAILABLE = True
-    print("[SCAFFOLD] STT available (speech_recognition)")
-except ImportError:
-    print("[SCAFFOLD] STT not available - install: pip install SpeechRecognition")
+if ENABLE_STT:
+    try:
+        import speech_recognition as sr
+        SCAFFOLD_STT_AVAILABLE = True
+        print("[SCAFFOLD] STT available (speech_recognition)")
+    except ImportError:
+        print("[SCAFFOLD] STT not available - install: pip install SpeechRecognition")
 
-try:
-    import pyttsx3
-    SCAFFOLD_TTS_AVAILABLE = True
-    print("[SCAFFOLD] TTS available (pyttsx3)")
-except ImportError:
-    print("[SCAFFOLD] TTS not available - install: pip install pyttsx3")
+if ENABLE_TTS:
+    try:
+        import pyttsx3
+        SCAFFOLD_TTS_AVAILABLE = True
+        print("[SCAFFOLD] TTS available (pyttsx3)")
+    except ImportError:
+        print("[SCAFFOLD] TTS not available - install: pip install pyttsx3")
 
 
 class ScaffoldLLM:
     """
     The YOLK - A tiny pre-trained LLM that provides initial language capability.
-
-    The AI uses this heavily at first, then gradually learns to rely on its own
-    understanding. Like training wheels that get removed.
-
-    Reliance factor:
-    - 0.9 at birth (almost fully dependent)
-    - Decreases as own vocab/understanding grows
-    - Eventually ~0.1 (barely uses it, mostly independent)
+    Reliance decreases as the AI's own understanding grows.
     """
 
     def __init__(self):
@@ -88,190 +114,126 @@ class ScaffoldLLM:
 
         if SCAFFOLD_LLM_AVAILABLE:
             try:
-                print("[LLM YOLK] Loading tiny GPT-2...")
-                # Use the smallest GPT-2 variant
-                self.tokenizer = GPT2Tokenizer.from_pretrained('distilgpt2')
-                self.model = GPT2LMHeadModel.from_pretrained('distilgpt2')
+                print("[LLM YOLK] Loading GPT-2...")
+                self.tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+                self.model = GPT2LMHeadModel.from_pretrained('gpt2')
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-                # Try to use GPU if available
                 if torch.cuda.is_available():
                     self.device = 'cuda'
                     self.model = self.model.to(self.device)
 
-                self.model.eval()  # Inference only
+                self.model.eval()
                 self.available = True
                 print(f"[LLM YOLK] Ready on {self.device}")
             except Exception as e:
                 print(f"[LLM YOLK] Failed to load: {e}")
-                self.available = False
 
-    def generate(self, prompt: str, max_tokens: int = 10) -> str:
-        """Generate text continuation from prompt"""
+    def chat(self, user_input: str, max_tokens: int = 60) -> str:
+        """Generate a response to user input."""
         if not self.available:
-            return ""
-
+            return "..."
         try:
+            prompt = f"User: {user_input}\nAI:"
             inputs = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
+            mask = torch.ones(inputs.shape, device=self.device)
 
             with torch.no_grad():
                 outputs = self.model.generate(
-                    inputs,
-                    max_new_tokens=max_tokens,
-                    num_return_sequences=1,
-                    do_sample=True,
-                    temperature=0.8,
-                    top_p=0.9,
+                    inputs, attention_mask=mask, max_new_tokens=max_tokens,
+                    do_sample=True, temperature=0.7, top_k=50,
                     pad_token_id=self.tokenizer.eos_token_id
                 )
 
+            full_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            response = full_text.split("AI:")[-1].strip() if "AI:" in full_text else full_text
+            return response.strip()
+        except Exception:
+            return "..."
+
+    def generate(self, prompt: str, max_tokens: int = 10) -> str:
+        """Generate text continuation from prompt."""
+        if not self.available:
+            return ""
+        try:
+            inputs = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    inputs, max_new_tokens=max_tokens, num_return_sequences=1,
+                    do_sample=True, temperature=0.8, top_p=0.9,
+                    pad_token_id=self.tokenizer.eos_token_id
+                )
             generated = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            # Return only the new part
             new_text = generated[len(prompt):].strip()
-            # Take just the first few words
             words = new_text.split()[:3]
             return " ".join(words)
-        except Exception as e:
-            print(f"[LLM YOLK] Generation error: {e}")
-            return ""
-
-    def get_embedding(self, text: str) -> Optional[torch.Tensor]:
-        """Get semantic embedding of text for understanding boost"""
-        if not self.available:
-            return None
-
-        try:
-            inputs = self.tokenizer.encode(text, return_tensors='pt').to(self.device)
-            with torch.no_grad():
-                outputs = self.model.transformer(inputs)
-                # Get last hidden state, average over sequence
-                embedding = outputs.last_hidden_state.mean(dim=1)
-            return embedding.cpu()
         except Exception:
-            return None
+            return ""
 
 
 class ScaffoldSTT:
-    """
-    Speech-to-Text scaffold - lets the AI "hear" spoken words.
-    Runs in background, queues recognized speech.
-    """
+    """Speech-to-Text scaffold - lets the AI hear spoken words."""
 
     def __init__(self):
         self.available = SCAFFOLD_STT_AVAILABLE
         self.recognizer = None
-        self.microphone = None
-        self.speech_queue = queue.Queue()
-        self.listening = False
-
         if self.available:
             try:
                 self.recognizer = sr.Recognizer()
                 self.recognizer.energy_threshold = 300
-                self.recognizer.dynamic_energy_threshold = True
-                print("[STT] Ready")
-            except Exception as e:
-                print(f"[STT] Init error: {e}")
+            except:
                 self.available = False
 
-    def listen_once(self, timeout: float = 2.0) -> Optional[str]:
-        """Try to capture and recognize speech once"""
+    def listen_once(self, timeout: float = 0.5) -> Optional[str]:
         if not self.available:
             return None
-
         try:
             with sr.Microphone() as source:
-                self.recognizer.adjust_for_ambient_noise(source, duration=0.3)
-                audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=5)
-
-            # Try Google Speech Recognition (free, no API key needed)
-            text = self.recognizer.recognize_google(audio)
-            return text.lower()
-        except sr.WaitTimeoutError:
-            return None
-        except sr.UnknownValueError:
-            return None  # Couldn't understand
-        except Exception as e:
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.1)
+                audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=4)
+            return self.recognizer.recognize_google(audio).lower()
+        except:
             return None
 
 
 class ScaffoldTTS:
-    """
-    Text-to-Speech scaffold - gives the AI a voice.
-
-    The AI can LEARN to turn this off (tts_gate output from PFC).
-    Initially always on (gate=1.0), but as it develops, it might
-    choose silence (gate→0.0).
-    """
+    """Text-to-Speech scaffold - lets the AI speak aloud."""
 
     def __init__(self):
         self.available = SCAFFOLD_TTS_AVAILABLE
         self.engine = None
-        self.speaking = False
-        self.speech_queue = queue.Queue()
 
-        if self.available:
+    def start_engine(self):
+        if self.available and self.engine is None:
             try:
                 self.engine = pyttsx3.init()
-                # Configure voice
-                self.engine.setProperty('rate', 150)  # Speed
-                self.engine.setProperty('volume', 0.8)
-
-                # Try to get a neutral voice
-                voices = self.engine.getProperty('voices')
-                if voices:
-                    self.engine.setProperty('voice', voices[0].id)
-
-                print("[TTS] Ready")
-            except Exception as e:
-                print(f"[TTS] Init error: {e}")
+                self.engine.setProperty('rate', 150)
+                self.engine.setProperty('volume', 1.0)
+                print("[TTS] Engine started")
+            except:
                 self.available = False
 
-    def speak(self, text: str, gate: float = 1.0):
-        """
-        Speak text, modulated by gate.
-        gate=1.0: Always speak
-        gate=0.0: Stay silent (AI learned to be quiet)
-        """
-        if not self.available or gate < 0.3:  # Below 0.3 = effectively muted
+    def speak_async(self, text: str):
+        if not self.available or not text:
             return
-
-        if not text or len(text.strip()) == 0:
-            return
-
         try:
-            # Don't speak if already speaking
-            if self.speaking:
-                return
+            if self.engine:
+                sentences = re.split(r'(?<=[.!?])\s+', text)
+                for s in sentences:
+                    if s.strip():
+                        self.engine.say(s)
+                        self.engine.runAndWait()
+        except:
+            pass
 
-            self.speaking = True
-            self.engine.say(text)
-            self.engine.runAndWait()
-            self.speaking = False
-        except Exception as e:
-            self.speaking = False
-
-    def speak_async(self, text: str, gate: float = 1.0):
-        """Queue speech to not block main thread"""
-        if gate < 0.3:
-            return
-        self.speech_queue.put((text, gate))
-
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QTextEdit, QLineEdit, QProgressBar, QFrame, QGridLayout
-)
-from PySide6.QtCore import Signal, QThread, Qt
-from PySide6.QtGui import QImage, QPixmap
-import pyqtgraph.opengl as gl
 
 # ============================================================================
-# 📊 SECTION 0: UTILITIES & DATA STRUCTURES
+# 📊 DATA STRUCTURES
 # ============================================================================
 
 @dataclass
 class EpisodeMemory:
-    """A single memory trace - stores embedding + context"""
+    """A single memory trace."""
     embedding: torch.Tensor
     timestamp: float
     importance: float = 1.0
@@ -281,291 +243,475 @@ class EpisodeMemory:
         self.importance *= rate
 
 
-class SessionLogger:
-    """Flight recorder for debugging and analysis"""
-
-    def __init__(self, filename: str = "brain_log.csv"):
-        self.filename = filename
-        self.start_time = time.time()
-        self.last_log = 0
-        self._init_file()
-
-    def _init_file(self):
-        try:
-            with open(self.filename, 'w', newline='') as f:
-                csv.writer(f).writerow([
-                    "Time", "Event", "Loss", "Layers", "Vocab_Size",
-                    "Energy", "Stress", "FPS"
-                ])
-        except Exception:
-            pass
-
-    def log(self, loss: float, layers: int, vocab_size: int,
-            energy: float, stress: float, fps: float, event: str = None):
-        now = time.time()
-        if (now - self.last_log > 1.0) or event:
-            self.last_log = now
-            try:
-                with open(self.filename, 'a', newline='') as f:
-                    csv.writer(f).writerow([
-                        f"{now - self.start_time:.2f}",
-                        event or "-",
-                        f"{loss:.4f}",
-                        layers,
-                        vocab_size,
-                        f"{energy:.2f}",
-                        f"{stress:.2f}",
-                        f"{fps:.1f}"
-                    ])
-            except Exception:
-                pass
+@dataclass
+class GrowthStats:
+    """Track learning stats per cluster for growth decisions."""
+    recent_losses: List[float] = field(default_factory=list)
+    expansions: int = 0
+    samples: int = 0
 
 
 class TabularRasaVocabulary:
-    """
-    CRITICAL: Starts COMPLETELY EMPTY.
-    Learns every word it encounters. No pre-loaded vocabulary.
-    """
+    """Dynamic vocabulary that learns new words."""
 
     def __init__(self, max_vocab: int = 10000):
         self.word2idx: Dict[str, int] = {}
         self.idx2word: List[str] = []
-        self.word_counts: Dict[str, int] = {}
-        self.recent_words: deque = deque(maxlen=100)  # Echo reflex buffer
         self.max_vocab = max_vocab
-        self.total_words_seen = 0
-
-    def learn_word(self, word: str) -> int:
-        """Learn a new word, return its index"""
-        word = word.lower().strip()
-        if not word:
-            return -1
-
-        self.total_words_seen += 1
-
-        if word not in self.word2idx:
-            if len(self.idx2word) >= self.max_vocab:
-                return -1  # Vocabulary full
-            idx = len(self.idx2word)
-            self.word2idx[word] = idx
-            self.idx2word.append(word)
-            self.word_counts[word] = 0
-
-        self.word_counts[word] += 1
-        self.recent_words.append(self.word2idx[word])
-        return self.word2idx[word]
+        self.recent_words: deque = deque(maxlen=100)
 
     def learn_text(self, text: str) -> List[int]:
-        """Learn all words from text, return indices"""
+        if not text:
+            return []
         words = re.findall(r'\b\w+\b', text.lower())
-        return [self.learn_word(w) for w in words if self.learn_word(w) >= 0]
+        indices = []
+        for w in words:
+            if w not in self.word2idx:
+                if len(self.idx2word) < self.max_vocab:
+                    idx = len(self.idx2word)
+                    self.word2idx[w] = idx
+                    self.idx2word.append(w)
+            if w in self.word2idx:
+                indices.append(self.word2idx[w])
+                self.recent_words.append(self.word2idx[w])
+        return indices
 
-    def get_recent_indices(self) -> List[int]:
-        """Get indices of recently seen words (for echo reflex)"""
-        return list(self.recent_words)
-
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self.idx2word)
 
 
 class EnergySystem:
-    """
-    Biological energy economics - NOW WITH LEARNED CONSERVATION
-
-    The PFC learns an energy_conservation gain that modulates:
-    - How much energy speaking costs
-    - How quickly to regenerate
-
-    This way the AI learns NOT to burn energy too fast.
-    """
+    """Energy economics - speaking costs energy."""
 
     def __init__(self):
         self.energy = 1.0
-        self.max_energy = 1.0
-        self.base_regen_rate = 0.015       # Base recovery per tick (slower)
-        self.base_speak_cost = 0.03        # Base cost per word (lower)
-        self.think_cost = 0.0005           # Very small baseline cost
-        self.fatigue_threshold = 0.2       # Below this = too tired to speak
-
-        # Learned modulation (comes from PFC)
-        self.conservation_gain = 0.5       # 0 = wasteful, 1 = very conservative
-
-    def set_conservation(self, gain: float):
-        """PFC sets this based on learning"""
-        self.conservation_gain = max(0.0, min(1.0, gain))
+        self.conservation_gain = 0.5
 
     def can_speak(self) -> bool:
-        return self.energy > self.fatigue_threshold
+        return self.energy > 0.1
 
     def spend_speaking(self, num_words: int = 1):
-        # Cost is REDUCED when conservation is high (AI learned to be efficient)
-        effective_cost = self.base_speak_cost * (1.5 - self.conservation_gain)
-        self.energy = max(0, self.energy - (effective_cost * num_words))
+        cost = 0.03 * (1.5 - self.conservation_gain) * num_words
+        self.energy = max(0.0, self.energy - cost)
 
-    def spend_thinking(self):
-        self.energy = max(0, self.energy - self.think_cost)
-
-    def regenerate(self, multiplier: float = 1.0):
-        # Regen is INCREASED when conservation is high
-        effective_regen = self.base_regen_rate * (0.5 + self.conservation_gain)
-        self.energy = min(self.max_energy, self.energy + effective_regen * multiplier)
-
-    def get_output_scale(self) -> float:
-        """Scale output volume/activity by energy level"""
-        return 0.3 + (self.energy * 0.7)
+    def regenerate(self):
+        regen = 0.015 * (0.5 + self.conservation_gain)
+        self.energy = min(1.0, self.energy + regen)
 
 
-@dataclass
-class InputEvent:
-    """
-    Tracks WHERE input came from - critical for avoiding feedback loops.
+class SessionLogger:
+    """Log session data to CSV."""
 
-    Sources:
-    - EXTERNAL: User typing, file ingestion (PRIMARY importance)
-    - SELF: AI's own output (SECONDARY importance - reduced learning)
-    - AMBIENT: Background noise, silence (minimal learning)
-    """
-    text: str
-    source: str  # "EXTERNAL", "SELF", "AMBIENT"
-    timestamp: float
-    importance: float = 1.0  # Learning weight multiplier
+    def __init__(self):
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        self.filepath = f"brain_log_{timestamp}.csv"
+        self.file = open(self.filepath, 'w', newline='')
+        self.writer = csv.writer(self.file)
+        self.writer.writerow([
+            'timestamp', 'loss', 'layers', 'vocab_size',
+            'energy', 'stress', 'fps', 'event'
+        ])
+        self.file.flush()
+
+    def log(self, loss, layers, vocab_size, energy, stress, fps, event=""):
+        self.writer.writerow([
+            time.strftime("%H:%M:%S"), f"{loss:.4f}", layers, vocab_size,
+            f"{energy:.2f}", f"{stress:.2f}", f"{fps:.1f}", event
+        ])
+        self.file.flush()
+
+    def __del__(self):
+        if hasattr(self, 'file'):
+            self.file.close()
 
 
 # ============================================================================
-# 🧠 SECTION 1: NEURAL COMPONENTS
+# 🧬 SECTION 1: NEURAL COMPONENTS (From ArtificialSentience + MagnumOpus)
 # ============================================================================
 
-class SubconsciousMind(nn.Module):
+class ElasticLowRankLayer(nn.Module):
     """
-    4-Layer Subconscious:
-    1. Sea of Noise - Creative randomness from LEARNED patterns
-    2. Peak Detector - Filter for relevant activations
-    3. Future Generator - Simulate possible outcomes
-    4. Evaluator - Pick the best path
+    Low-rank factorization layer that grows organically.
+    From ArtificialSentience: U·V^T factorization with per-cluster residual growth.
+    Compression forces abstraction (good for generalization).
+    """
 
-    Also maintains goal_momentum for emergent goal formation.
+    def __init__(self, n_in: int, n_out: int, rank: int = 4, num_clusters: int = 8):
+        super().__init__()
+        self.n_in = n_in
+        self.n_out = n_out
+        self.rank = rank
+        self.num_clusters = num_clusters
+
+        # Core low-rank matrices (shared)
+        self.U = nn.Parameter(0.02 * torch.randn(n_out, rank))
+        self.V = nn.Parameter(0.02 * torch.randn(n_in, rank))
+
+        # Per-cluster residual growth
+        self.U_res = nn.ParameterList()
+        self.V_res = nn.ParameterList()
+        for _ in range(num_clusters):
+            self.U_res.append(nn.Parameter(torch.zeros(n_out, 0), requires_grad=False))
+            self.V_res.append(nn.Parameter(torch.zeros(n_in, 0), requires_grad=False))
+
+        # Protected basis for consolidation (prevents forgetting)
+        self.register_buffer("protected_basis_V", torch.empty(n_in, 0))
+
+    def forward(self, x: torch.Tensor, active_cluster: int = 0) -> torch.Tensor:
+        # Core transformation: U @ V^T @ x
+        core = self.U @ (self.V.t() @ x.t())
+
+        # Add cluster-specific residual if it exists
+        if self.U_res[active_cluster].numel() > 0:
+            residual = self.U_res[active_cluster] @ (self.V_res[active_cluster].t() @ x.t())
+            core = core + residual
+
+        return F.gelu(core.t())
+
+    def grow_cluster(self, cluster_idx: int, grow_rank: int = 2):
+        """Add capacity to a specific cluster."""
+        device = self.U.device
+        new_U = 0.01 * torch.randn(self.n_out, grow_rank, device=device)
+        new_V = 0.01 * torch.randn(self.n_in, grow_rank, device=device)
+
+        if self.U_res[cluster_idx].numel() > 0:
+            self.U_res[cluster_idx] = nn.Parameter(
+                torch.cat([self.U_res[cluster_idx].data, new_U], dim=1),
+                requires_grad=True
+            )
+            self.V_res[cluster_idx] = nn.Parameter(
+                torch.cat([self.V_res[cluster_idx].data, new_V], dim=1),
+                requires_grad=True
+            )
+        else:
+            self.U_res[cluster_idx] = nn.Parameter(new_U, requires_grad=True)
+            self.V_res[cluster_idx] = nn.Parameter(new_V, requires_grad=True)
+
+    def get_cluster_rank(self, cluster_idx: int) -> int:
+        """Get current rank for a cluster."""
+        base = self.rank
+        extra = self.U_res[cluster_idx].shape[1] if self.U_res[cluster_idx].numel() > 0 else 0
+        return base + extra
+
+
+class NearestCentroidRouter(nn.Module):
+    """
+    Exploratory routing from ArtificialSentience.
+    Temperature-based + epsilon-greedy prevents cluster collapse.
+    """
+
+    def __init__(self, dim: int, num_clusters: int = 8, momentum: float = 0.02):
+        super().__init__()
+        self.dim = dim
+        self.num_clusters = num_clusters
+        self.momentum = momentum
+
+        # Initialize centroids
+        self.centroids = nn.Parameter(
+            F.normalize(torch.randn(num_clusters, dim), dim=1),
+            requires_grad=False
+        )
+
+    def update_centroid(self, k: int, z: torch.Tensor):
+        """Update centroid with new sample."""
+        with torch.no_grad():
+            z_norm = F.normalize(z.detach(), dim=0)
+            self.centroids[k] = F.normalize(
+                (1 - self.momentum) * self.centroids[k] + self.momentum * z_norm,
+                dim=0
+            )
+
+    def forward(self, z: torch.Tensor, tau: float = 1.0, eps: float = 0.0) -> int:
+        """Route to cluster with exploration."""
+        z_norm = F.normalize(z, dim=-1)
+        if z_norm.dim() == 2:
+            z_norm = z_norm.squeeze(0)
+
+        sims = F.cosine_similarity(z_norm.unsqueeze(0), self.centroids, dim=1)
+
+        # Epsilon-greedy exploration
+        if self.training and random.random() < eps:
+            return random.randint(0, self.num_clusters - 1)
+
+        # Temperature-based soft routing
+        if self.training and tau > 0:
+            probs = F.softmax(sims / tau, dim=0)
+            return int(torch.multinomial(probs, 1).item())
+
+        return int(torch.argmax(sims).item())
+
+
+class TemporalConsciousness(nn.Module):
+    """
+    From ArtificialSentience: Maintains awareness across past/present/future simultaneously.
+    Implements the "specious present" - a window of time that's all active at once.
+    """
+
+    def __init__(self, model_dim: int, window_size: int = 7):
+        super().__init__()
+        self.model_dim = model_dim
+        self.window_size = window_size
+        self.past_size = window_size // 2
+        self.future_size = window_size // 2
+
+        # Temporal attention across the conscious window
+        self.temporal_attention = nn.MultiheadAttention(
+            embed_dim=model_dim, num_heads=4, batch_first=True
+        )
+
+        # Presence weights: past fades, present peaks, future anticipates
+        self.presence_weights = nn.Parameter(torch.zeros(window_size))
+        with torch.no_grad():
+            center = window_size // 2
+            for i in range(window_size):
+                distance = abs(i - center)
+                self.presence_weights[i] = 1.0 / (1.0 + distance * 0.3)
+
+        # Integration layer
+        self.integrate = nn.Sequential(
+            nn.Linear(model_dim, model_dim),
+            nn.LayerNorm(model_dim),
+            nn.GELU(),
+            nn.Linear(model_dim, model_dim)
+        )
+
+        # Future anticipation
+        self.anticipate = nn.GRUCell(model_dim, model_dim)
+
+        # Conscious window buffer
+        self.conscious_window = deque(maxlen=window_size)
+
+    def initialize_window(self, initial_state: torch.Tensor):
+        self.conscious_window.clear()
+        for _ in range(self.window_size):
+            self.conscious_window.append(initial_state.clone())
+
+    def forward(self, z_current: torch.Tensor) -> Tuple[torch.Tensor, Dict, List]:
+        device = z_current.device
+
+        if len(self.conscious_window) == 0:
+            self.initialize_window(z_current)
+
+        # Update window
+        self.conscious_window.append(z_current)
+
+        # Generate future anticipations
+        window_list = list(self.conscious_window)
+        current_state = window_list[-1]
+
+        future_states = []
+        h_future = current_state
+        for _ in range(self.future_size):
+            h_future = self.anticipate(z_current, h_future)
+            future_states.append(h_future)
+
+        # Construct full temporal window
+        past_states = window_list[:self.past_size]
+        present_state = window_list[self.past_size] if len(window_list) > self.past_size else current_state
+
+        all_states = past_states + [present_state] + future_states
+        if len(all_states) < self.window_size:
+            # Pad with current state
+            all_states = all_states + [current_state] * (self.window_size - len(all_states))
+
+        temporal_window = torch.stack(all_states[:self.window_size], dim=0)
+
+        # Temporal attention
+        query = present_state.unsqueeze(0).unsqueeze(0)
+        kv = temporal_window.unsqueeze(0)
+
+        attended, attention_weights = self.temporal_attention(query, kv, kv, need_weights=True)
+        attended = attended.squeeze(0).squeeze(0)
+
+        # Modulate by presence intensity
+        presence_modulated = temporal_window * self.presence_weights.unsqueeze(1).to(device)
+        blended = presence_modulated.mean(dim=0)
+
+        # Integrate
+        h_conscious = self.integrate(attended + blended)
+
+        awareness_map = {
+            'attention_weights': attention_weights.squeeze(0).detach(),
+            'presence_weights': self.presence_weights.detach()
+        }
+
+        return h_conscious, awareness_map, future_states
+
+
+class TemporalResonance(nn.Module):
+    """
+    Simple temporal context via exponential moving average.
+    Complements TemporalConsciousness with short-term resonance.
     """
 
     def __init__(self, dim: int):
         super().__init__()
-        self.dim = dim
+        self.register_buffer('resonance_state', torch.zeros(1, dim))
+        self.clock_phase = 0.0
 
-        # 1. Sea of Noise - uses learned basis vectors (not hardcoded)
-        self.noise_basis = nn.Parameter(torch.randn(32, dim) * 0.02)
-        self.noise_proj = nn.Linear(dim, dim)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
 
-        # 2. Peak Detector
-        self.peak_scorer = nn.Linear(dim, 1)
+        # Ensure resonance state matches batch size
+        if self.resonance_state.shape[0] != x.shape[0]:
+            self.resonance_state = torch.zeros_like(x)
 
-        # 3. Future Generator (GRU for temporal simulation)
-        self.future_gen = nn.GRUCell(dim, dim)
+        # EMA update
+        self.resonance_state = (x * 0.1) + (self.resonance_state * 0.9)
+        self.clock_phase += 0.1
 
-        # 4. Evaluator
-        self.evaluator = nn.Sequential(
-            nn.Linear(dim, dim // 2),
-            nn.Tanh(),
-            nn.Linear(dim // 2, 1),
-            nn.Sigmoid()
-        )
-
-        # Goal momentum - emergent attractor
-        self.goal_momentum: Optional[torch.Tensor] = None
-
-    def forward(self, h: torch.Tensor, stress: float) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        device = h.device
-
-        # 1. Sea of Noise - creative randomness scaled by stress
-        noise_weights = torch.randn(1, 32, device=device) * (0.1 + stress * 0.3)
-        creative_noise = noise_weights @ self.noise_basis
-        noisy_h = self.noise_proj(h + creative_noise)
-
-        # 2. Peak Detection - filter relevant activations
-        peaks = torch.sigmoid(self.peak_scorer(noisy_h))
-        filtered_h = noisy_h * peaks
-
-        # 3. Future Generation - simulate outcomes
-        if self.goal_momentum is None:
-            self.goal_momentum = torch.zeros_like(h)
-        future_h = self.future_gen(filtered_h, self.goal_momentum.detach())
-
-        # 4. Evaluation - assess path quality
-        value = self.evaluator(future_h)
-
-        # Update goal momentum (emergent goals from experience)
-        self.goal_momentum = 0.95 * self.goal_momentum + 0.05 * future_h.detach()
-
-        return future_h, value, self.goal_momentum
+        # Rhythmic modulation
+        rhythm = 1 + 0.05 * math.sin(self.clock_phase)
+        return self.resonance_state * rhythm
 
 
 class MultiSpeedProcessor(nn.Module):
     """
-    Multi-scale abstraction learning:
-    - Fast channels (8, 16 dim): Quick pattern recognition
-    - Medium channels (32, 64 dim): Structural understanding
-    - Slow channels (128 dim): Deep comprehension
-
-    Trust weights shift over time (fast starts high, slow grows).
+    Multi-scale abstraction: Fast pattern recognition, slow understanding.
+    Like a baby: sees "blue sky" instantly, understands atmosphere over years.
     """
 
     def __init__(self, dim: int):
         super().__init__()
-        self.input_dim = dim
-        self.speed_dims = [8, 16, 32, 64, 128]
+        self.speeds = [16, 32, 64, 128]
 
-        # Projections to each speed
-        self.proj_in = nn.ModuleList([
-            nn.Linear(dim, d) for d in self.speed_dims
+        # Projectors for each speed
+        self.projectors = nn.ModuleList([
+            nn.Linear(dim, speed) for speed in self.speeds
+        ])
+        self.combiners = nn.ModuleList([
+            nn.Linear(speed, dim) for speed in self.speeds
         ])
 
-        # Projections back to common dimension
-        self.proj_out = nn.ModuleList([
-            nn.Linear(d, dim) for d in self.speed_dims
-        ])
-
-        # Trust weights - fast channels start trusted, slow grow over time
-        # Initial: [1.0, 0.8, 0.5, 0.2, 0.1]
-        self.trust = nn.Parameter(torch.tensor([1.0, 0.8, 0.5, 0.2, 0.1]))
-
-        # Age counter for trust evolution
-        self.age = 0
+        # Trust weights (learnable - shift toward slower channels over time)
+        self.trust = nn.Parameter(torch.tensor([1.0, 0.5, 0.2, 0.1]))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 3:
+            x = x.squeeze(1)
+
         outputs = []
+        for i, (proj, comb) in enumerate(zip(self.projectors, self.combiners)):
+            speed_repr = F.gelu(proj(x))
+            restored = comb(speed_repr)
+            outputs.append(restored * self.trust[i])
 
-        for proj_in, proj_out in zip(self.proj_in, self.proj_out):
-            # Think at this speed
-            thought = F.gelu(proj_in(x))
-            # Project back to common language
-            result = proj_out(thought)
-            outputs.append(result)
+        combined = sum(outputs) / (self.trust.sum() + 1e-6)
+        return combined
 
-        # Stack and mix based on trust
-        stacked = torch.stack(outputs, dim=0)  # [5, batch, seq, dim]
-        weights = F.softmax(self.trust, dim=0)
 
-        # Weighted sum across speeds
-        mixed = torch.einsum('sbld,s->bld', stacked, weights)
+# ============================================================================
+# 🧠 SECTION 2: SUBCONSCIOUS SYSTEM (4 Layers)
+# ============================================================================
 
-        return mixed
+class SeaOfNoise(nn.Module):
+    """Layer 0: Creative randomness from learned vectors."""
 
-    def age_tick(self):
-        """Called periodically to shift trust toward slower channels"""
-        self.age += 1
-        if self.age % 1000 == 0:
-            with torch.no_grad():
-                # Slowly increase trust in deeper channels
-                shift = torch.tensor([-0.01, -0.005, 0.0, 0.005, 0.01])
-                self.trust.data = torch.clamp(self.trust.data + shift, 0.05, 2.0)
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+        self.noise_proj = nn.Linear(dim, dim)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        noise = torch.randn_like(x) * 0.3
+        return self.noise_proj(x + noise)
+
+
+class PeakDetector(nn.Module):
+    """Layer 1: Filter for relevant activations."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.threshold = nn.Linear(dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gates = torch.sigmoid(self.threshold(x))
+        return x * gates
+
+
+class FutureGenerator(nn.Module):
+    """Layer 2: Simulate possible outcomes."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.gru = nn.GRUCell(dim, dim)
+        self.register_buffer('momentum', torch.zeros(1, dim))
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+
+        if self.momentum.shape != x.shape:
+            self.momentum = torch.zeros_like(x)
+
+        future = self.gru(x, self.momentum)
+        self.momentum = 0.95 * self.momentum + 0.05 * future.detach()
+        return future, x
+
+
+class ScenarioEvaluator(nn.Module):
+    """Layer 3: Assess path quality."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.judge = nn.Linear(dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        score = torch.sigmoid(self.judge(x))
+        return x * score
+
+
+class SubconsciousMind(nn.Module):
+    """
+    Four-layer subconscious pipeline.
+    Creates emergent goals via goal momentum.
+    """
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.sea = SeaOfNoise(dim)
+        self.peak = PeakDetector(dim)
+        self.future = FutureGenerator(dim)
+        self.evaluator = ScenarioEvaluator(dim)
+        self.output = nn.Linear(dim, dim)
+
+        # Goal momentum (emergent desires)
+        self.register_buffer('goal_momentum', torch.zeros(1, dim))
+
+    def forward(self, x: torch.Tensor, stress: float = 0.0) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Layer 0: Creative noise (more when stressed)
+        noise_scale = 1.0 + stress * 0.5
+        s0 = self.sea(x) * noise_scale
+
+        # Layer 1: Peak detection
+        s1 = self.peak(s0)
+
+        # Layer 2: Future simulation
+        s2, filtered = self.future(s1)
+
+        # Layer 3: Evaluation
+        s3 = self.evaluator(s2)
+
+        # Update goal momentum
+        if s3.shape == self.goal_momentum.shape:
+            self.goal_momentum = 0.95 * self.goal_momentum + 0.05 * s3.detach()
+
+        output = self.output(s3)
+        return output, s3, self.goal_momentum
+
+
+# ============================================================================
+# 💾 SECTION 3: BIOLOGICAL MEMORY
+# ============================================================================
 
 class BiologicalMemory(nn.Module):
     """
-    Unified memory system - NOT separate from the model.
-    Stores embeddings of significant moments.
-    Retrieval is by pattern matching, not lookup.
+    Memory IS the model's internal state, not a database.
+    Episodic, reconstructive, importance-weighted.
     """
 
-    def __init__(self, dim: int, capacity: int = 1000):
+    def __init__(self, dim: int, capacity: int = 2000):
         super().__init__()
         self.dim = dim
         self.capacity = capacity
@@ -575,70 +721,62 @@ class BiologicalMemory(nn.Module):
         self.encoder = nn.Linear(dim, dim)
         self.decoder = nn.Linear(dim, dim)
 
-    def store(self, state: torch.Tensor, importance: float = 1.0):
-        """Store a memory if significant enough"""
-        if importance < 0.3:
-            return  # Not significant enough
+    def store(self, state: torch.Tensor, importance: float = 0.5):
+        """Store a memory trace."""
+        if len(self.memories) >= self.capacity:
+            # Remove least important
+            self.memories.sort(key=lambda m: m.importance)
+            self.memories.pop(0)
 
-        encoded = self.encoder(state.detach().mean(dim=0 if state.dim() > 1 else None))
-
-        memory = EpisodeMemory(
-            embedding=encoded.cpu(),
+        encoded = self.encoder(state.detach())
+        self.memories.append(EpisodeMemory(
+            embedding=encoded,
             timestamp=time.time(),
             importance=importance
-        )
-
-        # Decay existing memories
-        for m in self.memories:
-            m.decay()
-
-        self.memories.append(memory)
-
-        # Prune if over capacity
-        if len(self.memories) > self.capacity:
-            # Keep most important
-            self.memories.sort(key=lambda m: m.importance * (m.access_count + 1), reverse=True)
-            self.memories = self.memories[:int(self.capacity * 0.9)]
+        ))
 
     def recall(self, query: torch.Tensor) -> Optional[torch.Tensor]:
-        """Retrieve most similar memory"""
+        """Reconstructive recall via pattern matching."""
         if not self.memories:
             return None
 
-        query_flat = query.detach().view(-1)
-        if query_flat.shape[0] > self.dim:
-            query_flat = query_flat[:self.dim]
-        elif query_flat.shape[0] < self.dim:
-            query_flat = F.pad(query_flat, (0, self.dim - query_flat.shape[0]))
+        query_enc = self.encoder(query.detach())
+        if query_enc.dim() == 1:
+            query_enc = query_enc.unsqueeze(0)
 
+        best_sim = -1
         best_memory = None
-        best_sim = -1.0
 
-        # Sample subset for efficiency
-        candidates = random.sample(self.memories, min(len(self.memories), 50))
+        for mem in self.memories:
+            mem_emb = mem.embedding
+            if mem_emb.dim() == 1:
+                mem_emb = mem_emb.unsqueeze(0)
 
-        for memory in candidates:
-            mem_flat = memory.embedding.view(-1)
-            if mem_flat.shape[0] != query_flat.shape[0]:
-                continue
-            sim = F.cosine_similarity(query_flat.cpu(), mem_flat, dim=0).item()
-            if sim > best_sim:
-                best_sim = sim
-                best_memory = memory
+            sim = F.cosine_similarity(query_enc, mem_emb, dim=-1).mean().item()
+            weighted_sim = sim * mem.importance
 
-        if best_sim > 0.6 and best_memory:
+            if weighted_sim > best_sim:
+                best_sim = weighted_sim
+                best_memory = mem
+
+        if best_memory is not None:
             best_memory.access_count += 1
-            best_memory.importance = min(2.0, best_memory.importance * 1.1)
-            return self.decoder(best_memory.embedding.to(query.device))
+            return self.decoder(best_memory.embedding)
 
         return None
 
+    def decay_all(self, rate: float = 0.995):
+        """Decay all memory importances."""
+        for mem in self.memories:
+            mem.decay(rate)
+
+
+# ============================================================================
+# 🎨 SECTION 4: IMAGINARIUM
+# ============================================================================
 
 class Imaginarium(nn.Module):
-    """
-    Dream generator - mixes reality, memory, and subconscious.
-    Creates internal visualizations and imaginings.
-    """
+    """Dream image generation - mixes real, memory, and subconscious."""
 
     def __init__(self, dim: int):
         super().__init__()
@@ -650,52 +788,45 @@ class Imaginarium(nn.Module):
             nn.Sigmoid()
         )
 
-    def forward(self, reality: torch.Tensor, memory: Optional[torch.Tensor],
-                subconscious: torch.Tensor, gain: float) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, real: torch.Tensor, memory: Optional[torch.Tensor],
+                subconscious: torch.Tensor, dream_gain: float) -> Tuple[torch.Tensor, torch.Tensor]:
 
         if memory is None:
-            memory = torch.zeros_like(reality)
+            memory = torch.zeros_like(real)
+        if memory.shape != real.shape:
+            memory = torch.zeros_like(real)
+        if subconscious.shape != real.shape:
+            subconscious = torch.zeros_like(real)
 
-        # Ensure all have same shape
-        if memory.shape != reality.shape:
-            memory = memory.view_as(reality) if memory.numel() >= reality.numel() else torch.zeros_like(reality)
-
-        combined = torch.cat([reality, memory, subconscious], dim=-1)
-        dream_state = torch.tanh(self.mixer(combined)) * (0.5 + gain)
+        combined = torch.cat([real, memory, subconscious], dim=-1)
+        dream_state = torch.tanh(self.mixer(combined)) * (0.5 + dream_gain)
         dream_image = self.decoder(dream_state)
 
         return dream_image, dream_state
 
 
+# ============================================================================
+# 🧠 SECTION 5: PREFRONTAL CORTEX (Executive Control)
+# ============================================================================
+
 class PrefrontalCortex(nn.Module):
     """
-    Executive control - learns to regulate the system.
-
-    Outputs (8 learned gains):
-    - vis_gain: How much to attend to vision
-    - aud_gain: How much to attend to audio
-    - dream_gain: How much imagination to mix in
-    - speak_impulse: Drive to vocalize
-    - cry_suppression: Learned emotional regulation
-    - energy_conservation: Learned energy management
-    - llm_reliance: How much to rely on scaffold LLM (starts HIGH, learns to reduce)
-    - tts_gate: Whether to use text-to-speech (starts HIGH, can learn to mute)
+    Learns to regulate the entire system.
+    8 learned control outputs.
     """
 
     def __init__(self, dim: int):
         super().__init__()
         self.planner = nn.GRUCell(dim + 2, dim)  # +2 for stress and energy
         self.policy = nn.Sequential(
-            nn.Linear(dim, 8),  # 8 outputs now
+            nn.Linear(dim, 8),
             nn.Sigmoid()
         )
 
-        # Initialize bias for llm_reliance and tts_gate to start HIGH
-        # This makes the AI dependent on scaffolds initially
+        # Initialize biases for scaffold dependence
         with torch.no_grad():
-            # Outputs 6 and 7 (llm_reliance, tts_gate) should start near 1.0
-            self.policy[0].bias[6] = 2.0  # Sigmoid(2) ≈ 0.88
-            self.policy[0].bias[7] = 2.0  # Sigmoid(2) ≈ 0.88
+            self.policy[0].bias[6] = 2.0  # llm_reliance starts high
+            self.policy[0].bias[7] = 2.0  # tts_gate starts high
 
     def forward(self, h: torch.Tensor, stress: float, energy: float,
                 prev_state: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -705,7 +836,6 @@ class PrefrontalCortex(nn.Module):
         else:
             prev_state = prev_state.detach()
 
-        # Include stress and energy as inputs
         context = torch.tensor([[stress, energy]], device=h.device)
         inp = torch.cat([h, context], dim=1)
 
@@ -718,36 +848,27 @@ class PrefrontalCortex(nn.Module):
 
 
 # ============================================================================
-# 🧬 SECTION 2: THE OMNIBRAIN (Main Model)
+# 🧬 SECTION 6: THE OMNIBRAIN (Main Model)
 # ============================================================================
 
 class OmniBrain(nn.Module):
     """
     The complete living brain.
-
     Starts microscopic, grows organically.
     All knowledge is learned, nothing hardcoded.
     """
 
-    def __init__(self, vocab_size: int = 10000):
+    def __init__(self, vocab_size: int = 10000, num_clusters: int = 8):
         super().__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.vocab_size = vocab_size
         self.base_dim = 128
+        self.num_clusters = num_clusters
 
         # === SENSORY INPUTS ===
-        self.eye = nn.Sequential(
-            nn.Linear(32 * 32, 64),
-            nn.Tanh()
-        )
-        self.ear_external = nn.Sequential(
-            nn.Linear(1024, 64),
-            nn.Tanh()
-        )
-        self.ear_self = nn.Sequential(  # Efference copy
-            nn.Linear(1024, 32),
-            nn.Tanh()
-        )
+        self.eye = nn.Sequential(nn.Linear(32 * 32, 64), nn.Tanh())
+        self.ear_external = nn.Sequential(nn.Linear(1024, 64), nn.Tanh())
+        self.ear_self = nn.Sequential(nn.Linear(1024, 32), nn.Tanh())
         self.self_proj = nn.Linear(32, self.base_dim)
         self.text_embed = nn.Embedding(vocab_size, self.base_dim)
 
@@ -757,116 +878,176 @@ class OmniBrain(nn.Module):
         self.multi_speed = MultiSpeedProcessor(self.base_dim)
         self.memory = BiologicalMemory(self.base_dim)
         self.imaginarium = Imaginarium(self.base_dim)
+        self.temporal_resonance = TemporalResonance(self.base_dim)
+        self.temporal_consciousness = TemporalConsciousness(self.base_dim, window_size=7)
 
-        # === CORTEX (Growable) ===
-        self.cortex = nn.ModuleList([nn.Linear(self.base_dim, self.base_dim)])
+        # === ROUTING (Exploratory) ===
+        self.router = NearestCentroidRouter(self.base_dim, num_clusters)
+
+        # === ELASTIC LOW-RANK CORTEX ===
+        self.cortex = ElasticLowRankLayer(
+            self.base_dim, self.base_dim,
+            rank=4, num_clusters=num_clusters
+        )
+
+        # === ADDITIONAL CORTEX LAYERS (can grow) ===
+        self.cortex_layers = nn.ModuleList([nn.Linear(self.base_dim, self.base_dim)])
 
         # === OUTPUTS ===
         self.vis_out = nn.Linear(self.base_dim, 32 * 32)
-        self.voice_ctrl = nn.Linear(self.base_dim, 3)  # tension, chaos, raw_impulse
+        self.voice_ctrl = nn.Linear(self.base_dim, 3)
         self.text_out = nn.Linear(self.base_dim, vocab_size)
         self.text_gate = nn.Linear(self.base_dim, 1)
 
         # === STATE ===
         self.pfc_state: Optional[torch.Tensor] = None
         self.growth_pressure = 0.0
-        self.growth_threshold = 5.0     # Higher threshold (was 3.5)
-        self.growth_patience = 100      # Need more sustained confusion (was 50)
+        self.growth_threshold = 4.5
+        self.growth_patience = 80
         self.steps_above_threshold = 0
+        self.current_cluster = 0
+
+        # Per-cluster stats for growth
+        self.cluster_stats = [GrowthStats() for _ in range(num_clusters)]
+
+        # Age (for exploration annealing)
+        self.age = 0
 
         self.to(self.device)
 
-    def grow_cortex(self) -> int:
-        """Add a new cortex layer (depth growth)"""
+    def get_exploration_params(self) -> Tuple[float, float]:
+        """Get temperature and epsilon based on age."""
+        # Early: explore widely; Late: exploit
+        progress = min(1.0, self.age / 10000)
+        tau = 2.0 - 1.4 * progress      # 2.0 → 0.6
+        eps = 0.2 - 0.18 * progress     # 0.2 → 0.02
+        return tau, eps
+
+    def grow_cortex_layer(self) -> int:
+        """Add a new cortex layer (depth growth)."""
         new_layer = nn.Linear(self.base_dim, self.base_dim).to(self.device)
-        # Initialize as identity + small noise
         with torch.no_grad():
-            new_layer.weight.copy_(torch.eye(self.base_dim) + torch.randn(self.base_dim, self.base_dim) * 0.01)
+            new_layer.weight.copy_(
+                torch.eye(self.base_dim) + torch.randn(self.base_dim, self.base_dim) * 0.01
+            )
             new_layer.bias.zero_()
-        self.cortex.append(new_layer)
-        return len(self.cortex)
+        self.cortex_layers.append(new_layer)
+        return len(self.cortex_layers)
+
+    def grow_cluster(self, cluster_idx: int) -> int:
+        """Grow a specific cluster's capacity."""
+        self.cortex.grow_cluster(cluster_idx, grow_rank=2)
+        return self.cortex.get_cluster_rank(cluster_idx)
 
     def check_growth(self, loss: float) -> bool:
-        """Check if we should grow based on sustained confusion"""
-        # Only grow if loss is REALLY high and sustained
-        # Also require minimum steps between growths
+        """Check if growth should be triggered."""
         if loss > self.growth_threshold:
             self.steps_above_threshold += 1
-            # Need MORE patience - 100 steps instead of 50
-            if self.steps_above_threshold >= self.growth_patience:
-                self.steps_above_threshold = 0
-                # Cap max layers to prevent runaway growth
-                if len(self.cortex) < 20:  # Max 20 layers
+            if self.steps_above_threshold > self.growth_patience:
+                if len(self.cortex_layers) < 15:  # Safety cap
+                    self.steps_above_threshold = 0
                     return True
         else:
-            # Reset faster when doing well
-            self.steps_above_threshold = max(0, self.steps_above_threshold - 2)
+            self.steps_above_threshold = max(0, self.steps_above_threshold - 1)
         return False
 
-    def forward(self, vision: torch.Tensor, audio_ext: torch.Tensor,
-                audio_self: torch.Tensor, text_indices: torch.Tensor,
-                stress: float, energy: float,
-                input_source: str = "EXTERNAL") -> Dict[str, torch.Tensor]:
-        """
-        Full forward pass through the brain.
+    def check_cluster_growth(self, cluster_idx: int, loss: float) -> bool:
+        """Check if a specific cluster needs growth."""
+        stats = self.cluster_stats[cluster_idx]
+        stats.recent_losses.append(loss)
+        stats.samples += 1
 
-        Args:
-            input_source: "EXTERNAL" (user/file), "SELF" (own output), "AMBIENT" (noise)
-                         This affects learning weight.
+        if len(stats.recent_losses) > 50:
+            stats.recent_losses.pop(0)
 
-        Returns dict with all outputs for flexible use.
-        """
-        # === SENSORY PROCESSING ===
-        v = self.eye(vision)
-        a_ext = self.ear_external(audio_ext)
-        a_self = self.self_proj(self.ear_self(audio_self))
+        if len(stats.recent_losses) >= 50:
+            first_half = stats.recent_losses[:25]
+            second_half = stats.recent_losses[25:]
+            improvement = sum(first_half) / 25 - sum(second_half) / 25
 
-        # Text embedding (handle empty/invalid)
-        if text_indices.numel() > 0 and text_indices.max() < self.vocab_size:
-            t = self.text_embed(text_indices).mean(dim=1)
+            # Plateau detected - need more capacity
+            if improvement < 0.01 and sum(second_half) / 25 > 0.02:
+                if self.cortex.get_cluster_rank(cluster_idx) < 20:
+                    stats.recent_losses.clear()
+                    stats.expansions += 1
+                    return True
+        return False
+
+    def forward(self, v: torch.Tensor, a_ext: torch.Tensor, a_self: torch.Tensor,
+                t_idx: torch.Tensor, stress: float, energy: float,
+                input_source: str = "AMBIENT") -> Dict[str, torch.Tensor]:
+
+        self.age += 1
+
+        # === INPUT ENCODING ===
+        v_enc = self.eye(v)  # [batch, 64]
+        a_ext_enc = self.ear_external(a_ext)  # [batch, 64]
+        a_self_enc = self.self_proj(self.ear_self(a_self))  # [batch, 128]
+
+        # Text encoding
+        if t_idx.numel() > 0 and t_idx.max() < self.vocab_size:
+            t_enc = self.text_embed(t_idx).mean(dim=1)
         else:
-            t = torch.zeros(1, self.base_dim, device=self.device)
+            t_enc = torch.zeros(1, self.base_dim, device=self.device)
 
-        # === EXECUTIVE CONTROL ===
-        # Bootstrap hidden state for PFC
+        # === PFC CONTROL ===
         if self.pfc_state is None:
-            ghost_h = torch.zeros(1, self.base_dim, device=self.device)
-        else:
-            ghost_h = self.pfc_state.detach()
+            self.pfc_state = torch.zeros(1, self.base_dim, device=self.device)
 
-        actions, self.pfc_state = self.pfc(ghost_h, stress, energy, self.pfc_state)
-        vis_gain, aud_gain, dream_gain, speak_impulse, cry_suppression, energy_conservation, llm_reliance, tts_gate = actions[0]
+        actions, self.pfc_state = self.pfc(self.pfc_state, stress, energy, self.pfc_state)
 
-        # Apply gains to sensory input
-        v = v * (1.0 + vis_gain)
-        a_ext = a_ext * (1.0 + aud_gain)
+        vis_gain = actions[0, 0]
+        aud_gain = actions[0, 1]
+        dream_gain = actions[0, 2]
+        speak_impulse = actions[0, 3]
+        cry_suppression = actions[0, 4]
+        energy_conservation = actions[0, 5]
+        llm_reliance = actions[0, 6]
+        tts_gate = actions[0, 7]
 
-        # === INPUT SOURCE WEIGHTING ===
-        # External input gets full attention, self-output gets reduced
+        # === INPUT WEIGHTING ===
         if input_source == "EXTERNAL":
             input_weight = 1.0
         elif input_source == "SELF":
-            input_weight = 0.3  # Learn less from own output to avoid loops
-        else:  # AMBIENT
+            input_weight = 0.3
+        else:
             input_weight = 0.1
 
         # === INTEGRATION ===
-        # Combine all inputs (weighted by source)
-        combined = torch.cat([v, a_ext], dim=1)  # [batch, 128]
-        h = combined + a_self + (t * input_weight)
+        combined = torch.cat([v_enc * (1 + vis_gain), a_ext_enc * (1 + aud_gain)], dim=1)
+        h = combined.sum(dim=1, keepdim=True).expand(-1, self.base_dim)
+        h = h + a_self_enc + (t_enc * input_weight)
+
+        # === TEMPORAL PROCESSING ===
+        h_resonance = self.temporal_resonance(h)
+        h = h + h_resonance * 0.2
+
+        h_conscious, awareness, futures = self.temporal_consciousness(h.squeeze(0) if h.dim() > 1 else h)
+        if h_conscious.dim() == 1:
+            h_conscious = h_conscious.unsqueeze(0)
+        h = h + h_conscious * 0.3
 
         # === SUBCONSCIOUS ===
         sub_state, sub_value, goal = self.subconscious(h, stress)
-        h = h + sub_state * 0.3  # Subtle subconscious influence
+        h = h + sub_state * 0.3
 
         # === MULTI-SPEED PROCESSING ===
-        h = h.unsqueeze(1)  # Add sequence dim for multi-speed
         h = self.multi_speed(h)
-        h = h.squeeze(1)
 
-        # === CORTEX (Deep processing) ===
-        for layer in self.cortex:
-            h = F.gelu(layer(h)) + h  # Residual
+        # === ROUTING (Exploratory) ===
+        tau, eps = self.get_exploration_params()
+        self.current_cluster = self.router(h.squeeze(0), tau=tau, eps=eps)
+
+        # Update router centroid
+        with torch.no_grad():
+            self.router.update_centroid(self.current_cluster, h.squeeze(0))
+
+        # === ELASTIC CORTEX ===
+        h = self.cortex(h, active_cluster=self.current_cluster)
+
+        # === ADDITIONAL CORTEX LAYERS ===
+        for layer in self.cortex_layers:
+            h = F.gelu(layer(h)) + h
 
         # === MEMORY ===
         memory_recall = self.memory.recall(h)
@@ -877,35 +1058,36 @@ class OmniBrain(nn.Module):
         # === OUTPUTS ===
         cortex_img = torch.sigmoid(self.vis_out(h))
         voice_params = torch.sigmoid(self.voice_ctrl(h))
-        text_logits = self.text_out(dream_h)  # From imaginarium for creativity
+        text_logits = self.text_out(dream_h)
         text_gate_raw = torch.sigmoid(self.text_gate(h))
 
-        # Combine speak impulse from PFC with text gate
-        # BUT reduce speak drive when stressed (should cry, not talk)
-        stress_penalty = max(0, stress - 0.3) * 0.8  # High stress = less talking
+        # Combine speak impulse with stress penalty
+        stress_penalty = max(0, stress - 0.3) * 0.8
         final_speak_drive = (text_gate_raw + speak_impulse * 0.5) * (1.0 - stress_penalty)
 
         return {
             'cortex_image': cortex_img,
             'dream_image': dream_img,
-            'voice_params': voice_params,  # [tension, chaos, raw_impulse]
+            'voice_params': voice_params,
             'text_logits': text_logits,
             'speak_drive': final_speak_drive,
             'speak_impulse': speak_impulse,
             'cry_suppression': cry_suppression,
             'energy_conservation': energy_conservation,
-            'llm_reliance': llm_reliance,      # How much to use scaffold LLM
-            'tts_gate': tts_gate,              # Whether to use text-to-speech
+            'llm_reliance': llm_reliance,
+            'tts_gate': tts_gate,
             'input_weight': torch.tensor(input_weight),
             'hidden': h,
             'actions': actions,
             'goal_momentum': goal,
-            'sub_value': sub_value
+            'sub_value': sub_value,
+            'cluster': self.current_cluster,
+            'awareness': awareness
         }
 
 
 # ============================================================================
-# 🔊 SECTION 3: AUDIO ENGINE (SYRINX)
+# 🔊 SECTION 7: AUDIO ENGINE (SYRINX)
 # ============================================================================
 
 class EmotionalSyrinx:
@@ -921,105 +1103,63 @@ class EmotionalSyrinx:
         self.fs = sample_rate
         self.phase = 0.0
         self.base_freq = 55.0
-        self.mod_phase = 0.0
         self.cry_phase = 0.0
         self.data_phase = 0.0
-        self.growth_buffer: Optional[np.ndarray] = None
-        self.growth_position = 0
+        self.growth_triggered = False
+        self.growth_countdown = 0
 
     def trigger_growth_sound(self):
-        """Queue a growth sound"""
-        duration = 0.5
-        frames = int(self.fs * duration)
-        t = np.arange(frames) / self.fs
-
-        # Low gong
-        gong = np.sin(2 * np.pi * 80 * t) * np.exp(-t * 4)
-        # Shimmer
-        shimmer = np.sin(2 * np.pi * 400 * t) * np.exp(-t * 6) * 0.3
-        # Rising tone
-        rise = np.sin(2 * np.pi * (100 + 200 * t) * t) * np.exp(-t * 3) * 0.2
-
-        self.growth_buffer = np.clip(gong + shimmer + rise, -0.9, 0.9)
-        self.growth_position = 0
+        self.growth_triggered = True
+        self.growth_countdown = int(self.fs * 0.5)
 
     def generate(self, frames: int, tension: float, chaos: float,
                  speak_impulse: float, stress: float, energy: float,
                  cry_suppression: float) -> np.ndarray:
-        """
-        Generate audio frame.
 
-        Args:
-            tension: Thinking intensity (0-1)
-            chaos: Randomness/confusion (0-1)
-            speak_impulse: Drive to vocalize (0-1)
-            stress: Current stress level (0-1)
-            energy: Current energy level (0-1)
-            cry_suppression: Learned suppression of crying (0-1)
-        """
         t = np.arange(frames) / self.fs
         output = np.zeros(frames)
 
-        # === LAYER 1: DRONE (Always on) ===
+        # Layer 1: Thinking drone (55-110Hz)
         target_freq = 55.0 + (tension * 55.0)
         self.base_freq = 0.95 * self.base_freq + 0.05 * target_freq
-
-        throb_rate = 2.0 + (tension * 8.0)
-        throb = np.sin(2 * np.pi * throb_rate * t + self.mod_phase)
-        self.mod_phase += 2 * np.pi * throb_rate * (frames / self.fs)
-
-        carrier = np.tanh(5.0 * np.sin(2 * np.pi * self.base_freq * t + self.phase))
-        drone = carrier * (0.25 + 0.15 * throb)
+        drone = np.sin(2 * np.pi * self.base_freq * t + self.phase) * 0.08
         self.phase += 2 * np.pi * self.base_freq * (frames / self.fs)
-
         output += drone
 
-        # === LAYER 2: CRYING (Triggered by confusion/stress, learnable suppression) ===
-        # Cry more easily when confused - lower threshold
-        cry_amount = max(0, stress - 0.3) * (1.0 - cry_suppression) * (1.0 - energy * 0.3)
-        if cry_amount > 0.05:  # Lower threshold to trigger crying
-            # Warbling cry frequency - more distressed
-            cry_freq = 350 + 250 * np.sin(self.cry_phase * 6)  # More warble
-            cry = np.sin(2 * np.pi * cry_freq * t) * cry_amount * 0.6  # Louder
-            # Sob modulation - more pronounced
-            sob = 0.4 + 0.6 * np.sin(2 * np.pi * 4 * t + self.cry_phase)  # Faster sobs
-            cry *= sob
-            self.cry_phase += 2 * np.pi * 4 * (frames / self.fs)
+        # Layer 2: Crying (stress response, learnable suppression)
+        cry_amount = max(0, stress - 0.4) * (1.0 - cry_suppression)
+        if cry_amount > 0.05:
+            cry_freq = 300 + 100 * np.sin(self.cry_phase)
+            cry = np.sin(2 * np.pi * cry_freq * t) * cry_amount * 0.15
+            self.cry_phase += 0.1
             output += cry
 
-        # === LAYER 3: SPEECH (When impulse high and energy sufficient) ===
-        if speak_impulse > 0.5 and energy > 0.15:
-            data_freq = 800.0 + 400.0 * np.round(np.sin(
-                2 * np.pi * (10 + chaos * 20) * t + self.data_phase
-            ))
-            speech = np.sign(np.sin(2 * np.pi * data_freq * t)) * 0.25 * speak_impulse
-            self.data_phase += 2 * np.pi * 20 * (frames / self.fs)
+        # Layer 3: Speech (data transmission)
+        if speak_impulse > 0.4:
+            freq_mod = 600.0 + 300.0 * np.sin(2 * np.pi * (10 + chaos * 50) * t + self.data_phase)
+            speech = np.sign(np.sin(2 * np.pi * freq_mod * t)) * speak_impulse * 0.4
+            self.data_phase += 0.2
             output += speech
 
-        # === LAYER 4: GROWTH SOUND (One-shot) ===
-        if self.growth_buffer is not None:
-            remaining = len(self.growth_buffer) - self.growth_position
-            to_add = min(frames, remaining)
-            output[:to_add] += self.growth_buffer[self.growth_position:self.growth_position + to_add] * 0.5
-            self.growth_position += to_add
-            if self.growth_position >= len(self.growth_buffer):
-                self.growth_buffer = None
-
-        # === MASTER VOLUME (Energy-aware) ===
-        output *= (0.4 + energy * 0.6)
+        # Layer 4: Growth sound
+        if self.growth_countdown > 0:
+            growth_t = np.arange(min(frames, self.growth_countdown)) / self.fs
+            gong_freq = 220 * (1 + 0.5 * np.exp(-growth_t * 5))
+            gong = np.sin(2 * np.pi * gong_freq * growth_t) * np.exp(-growth_t * 3) * 0.6
+            output[:len(gong)] += gong
+            self.growth_countdown -= frames
 
         return np.clip(output, -0.9, 0.9).reshape(-1, 1).astype(np.float32)
 
 
 # ============================================================================
-# 📂 SECTION 4: FILE READER (PACMAN)
+# 📁 SECTION 8: FILE INGESTION (PACMAN)
 # ============================================================================
 
+from PySide6.QtCore import Signal, QThread
+
 class Pacman(QThread):
-    """
-    Background file reader - continuously ingests training data.
-    Watches the training_data folder for new .txt files.
-    """
+    """Watches training_data folder for new .txt files."""
 
     sig_read = Signal(str)
 
@@ -1040,7 +1180,6 @@ class Pacman(QThread):
                         try:
                             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                                 text = f.read()
-                                # Chunk into words
                                 words = re.findall(r'\b\w+\b', text.lower())
                                 for word in words:
                                     self.queue.put(word)
@@ -1054,13 +1193,11 @@ class Pacman(QThread):
 
 
 # ============================================================================
-# ⚙️ SECTION 5: MAIN WORKER THREAD
+# ⚙️ SECTION 9: MAIN WORKER THREAD
 # ============================================================================
 
 class VitalisWorker(QThread):
-    """
-    Main processing loop - runs the brain continuously.
-    """
+    """Main processing loop - runs the brain continuously."""
 
     sig_update = Signal(dict)
     sig_growth = Signal(int)
@@ -1077,41 +1214,38 @@ class VitalisWorker(QThread):
         self.logger = SessionLogger()
         self.pacman = Pacman()
 
-        # === SCAFFOLD SYSTEMS (Training Wheels) ===
+        # === SCAFFOLD SYSTEMS ===
         print("[INIT] Loading scaffold systems...")
-        self.scaffold_llm = ScaffoldLLM()      # The "yolk" - pre-trained language
-        self.scaffold_stt = ScaffoldSTT()      # Speech-to-text input
-        self.scaffold_tts = ScaffoldTTS()      # Text-to-speech output
+        self.scaffold_llm = ScaffoldLLM()
+        self.scaffold_stt = ScaffoldSTT()
+        self.scaffold_tts = ScaffoldTTS()
 
-        # Track scaffold usage for logging
-        self.llm_reliance = 0.9   # Start heavily dependent
-        self.tts_gate = 1.0       # TTS on by default
+        # Track scaffold usage
+        self.llm_reliance = 0.9
+        self.tts_gate = 1.0
 
         # === BRAIN ===
         self.brain = OmniBrain(self.vocab.max_vocab)
         self.optimizer = torch.optim.AdamW(self.brain.parameters(), lr=0.002)
 
-        # === STATE (Initialize ALL before any threads start) ===
+        # === STATE ===
         self.last_loss = 0.5
         self.current_stress = 0.0
         self.last_hidden = None
         self.efference_copy = np.zeros(1024)
         self.current_volume = 0.0
         self.is_speaking = False
-        self.last_voice = np.array([0.0, 0.0, 0.0])  # Initialize BEFORE audio starts
+        self.last_voice = np.array([0.0, 0.0, 0.0])
         self.last_cry_suppression = 0.5
-        self.last_ai_output = None  # Track self-output for feedback prevention
-
-        # Recent context for LLM prompting
-        self.recent_words = []  # Last few words for context
+        self.last_ai_output = None
 
         # Audio
-        self.audio_queue = queue.Queue(maxsize=10)  # Limit queue size
+        self.audio_queue = queue.Queue(maxsize=10)
 
-        # Flags for optional features
+        # Flags
         self.use_camera = True
-        self.use_microphone = True
-        self.use_audio_output = True
+        self.use_microphone = ENABLE_RAW_MICROPHONE and SOUNDDEVICE_AVAILABLE
+        self.use_audio_output = ENABLE_RAW_AUDIO_OUTPUT and SOUNDDEVICE_AVAILABLE
 
         # Start Pacman
         self.pacman.start()
@@ -1121,22 +1255,29 @@ class VitalisWorker(QThread):
     def run(self):
         print("[WORKER] Starting main loop...")
 
-        # Setup audio OUTPUT stream
+        # Windows COM fix for TTS
+        if TRY_COM_FIX:
+            try:
+                pythoncom.CoInitialize()
+            except:
+                pass
+
+        self.scaffold_tts.start_engine()
+        time.sleep(0.3)
+
+        # Setup audio output
         stream = None
         if self.use_audio_output:
             try:
                 stream = sd.OutputStream(
-                    samplerate=16000,
-                    channels=1,
-                    callback=self._audio_callback,
-                    blocksize=512
+                    samplerate=16000, channels=1,
+                    callback=self._audio_callback, blocksize=512
                 )
                 stream.start()
                 print("[AUDIO] Output stream started")
             except Exception as e:
-                print(f"[AUDIO] Output error (continuing without): {e}")
+                print(f"[AUDIO] Output error: {e}")
                 stream = None
-                self.use_audio_output = False
 
         # Setup camera
         cap = None
@@ -1148,11 +1289,9 @@ class VitalisWorker(QThread):
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
                     print("[CAMERA] Opened successfully")
                 else:
-                    print("[CAMERA] Could not open (continuing without)")
                     cap = None
                     self.use_camera = False
-            except Exception as e:
-                print(f"[CAMERA] Error (continuing without): {e}")
+            except:
                 cap = None
                 self.use_camera = False
 
@@ -1161,19 +1300,14 @@ class VitalisWorker(QThread):
         if self.use_microphone:
             try:
                 mic_stream = sd.InputStream(
-                    samplerate=16000,
-                    channels=1,
-                    blocksize=1024,
+                    samplerate=16000, channels=1, blocksize=1024,
                     callback=self._mic_callback
                 )
                 mic_stream.start()
                 print("[MIC] Input stream started")
-            except Exception as e:
-                print(f"[MIC] Error (continuing without): {e}")
+            except:
                 mic_stream = None
-                self.use_microphone = False
 
-        frame_time = time.time()
         fps = 10.0
         loop_count = 0
 
@@ -1184,336 +1318,224 @@ class VitalisWorker(QThread):
                 loop_start = time.time()
                 loop_count += 1
 
-                if loop_count % 100 == 0:
-                    print(f"[LOOP] Frame {loop_count}, FPS: {fps:.1f}, Vocab: {len(self.vocab)}")
-
-                # === GATHER SENSORY INPUT ===
-
-                # Vision
-                if cap and cap.isOpened():
-                    ret, frame = cap.read()
-                    if ret:
-                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                        gray = cv2.resize(gray, (32, 32)) / 255.0
-                    else:
-                        gray = np.random.rand(32, 32) * 0.1
-                else:
-                    gray = np.random.rand(32, 32) * 0.1
-
-                vision_tensor = torch.tensor(gray.flatten(), dtype=torch.float32).unsqueeze(0).to(self.brain.device)
-
-                # Audio (external)
-                try:
-                    audio_data = self.audio_queue.get_nowait()
-                    audio_fft = np.abs(np.fft.fft(audio_data.flatten(), 1024))[:1024]
-                    self.current_volume = float(np.linalg.norm(audio_data))
-                except queue.Empty:
-                    audio_fft = np.zeros(1024)
-
-                audio_ext_tensor = torch.tensor(audio_fft, dtype=torch.float32).unsqueeze(0).to(self.brain.device)
-
-                # Audio (self - efference copy)
-                audio_self_tensor = torch.tensor(self.efference_copy, dtype=torch.float32).unsqueeze(0).to(self.brain.device)
-
-                # === INPUT SOURCE TRACKING ===
-                # Critical: differentiate EXTERNAL input from SELF output
+                # === GATHER INPUTS ===
                 text_input = ""
+                input_source = "AMBIENT"
                 user_msg = None
-                input_source = "AMBIENT"  # Default
+                ai_msg = None
+                pac_msg = None
 
-                # Text from user (HIGHEST PRIORITY - EXTERNAL)
+                # User text
                 try:
-                    user_msg = self.text_queue.get_nowait()
-                    text_input = user_msg
-                    input_source = "EXTERNAL"  # User input is primary
+                    text_input = self.text_queue.get_nowait()
+                    input_source = "EXTERNAL"
+                    user_msg = text_input
                 except queue.Empty:
                     pass
 
-                # === SPEECH-TO-TEXT (Scaffold) ===
-                # Check for speech input periodically (not every frame - expensive)
-                if self.scaffold_stt.available and loop_count % 30 == 0:  # Every ~1.5 sec
+                # STT
+                if self.scaffold_stt.available and loop_count % 30 == 0:
                     try:
-                        speech = self.scaffold_stt.listen_once(timeout=0.5)
+                        speech = self.scaffold_stt.listen_once(timeout=0.3)
                         if speech:
-                            text_input = speech if not text_input else text_input + " " + speech
+                            text_input = text_input + " " + speech if text_input else speech
                             input_source = "EXTERNAL"
-                            print(f"[STT] Heard: {speech}")
-                    except Exception as e:
-                        pass  # Don't block on STT errors
+                    except:
+                        pass
 
-                # Text from Pacman/files (also EXTERNAL)
-                pac_msg = None
+                # Pacman
                 try:
                     pac_word = self.pacman.queue.get_nowait()
-                    text_input += " " + pac_word if text_input else pac_word
+                    text_input = text_input + " " + pac_word if text_input else pac_word
                     pac_msg = f"[LEARN] {pac_word}"
-                    if input_source != "EXTERNAL":  # Don't override user input
+                    if input_source != "EXTERNAL":
                         input_source = "EXTERNAL"
                 except queue.Empty:
                     pass
 
-                # Track if this is self-generated (from last AI output)
-                # If we're learning from our own output, mark it as SELF
-                if hasattr(self, 'last_ai_output') and self.last_ai_output:
-                    if text_input == "" and self.last_ai_output:
-                        # No new input, but we had output - could learn from self
-                        # But we DON'T want to by default to avoid loops
-                        pass
-                    self.last_ai_output = None  # Clear after checking
-
-                # Learn vocabulary from all text
+                # Learn vocabulary
                 if text_input:
                     self.vocab.learn_text(text_input)
 
                 # Convert text to indices
-                text_indices = []
-                if text_input:
-                    words = re.findall(r'\b\w+\b', text_input.lower())
-                    for w in words:
-                        if w in self.vocab.word2idx:
-                            text_indices.append(self.vocab.word2idx[w])
+                text_indices = self.vocab.learn_text(text_input) if text_input else []
 
-                if text_indices:
-                    text_tensor = torch.tensor([text_indices], dtype=torch.long).to(self.brain.device)
+                # === VISION ===
+                if cap and cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret:
+                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        gray = cv2.resize(gray, (32, 32))
+                        v = torch.from_numpy(gray).float().flatten().unsqueeze(0)
+                        v = v / 255.0
+                    else:
+                        v = torch.randn(1, 32 * 32) * 0.1
                 else:
-                    text_tensor = torch.zeros(1, 1, dtype=torch.long).to(self.brain.device)
+                    v = torch.randn(1, 32 * 32) * 0.1
+                v = v.to(self.brain.device)
 
-                # === FORWARD PASS (with input source) ===
+                # === AUDIO ===
+                try:
+                    raw_audio = self.audio_queue.get_nowait()
+                    a_ext = torch.from_numpy(np.abs(np.fft.fft(raw_audio.flatten(), 1024))).float().unsqueeze(0)
+                except:
+                    a_ext = torch.randn(1, 1024) * 0.1
+                a_ext = a_ext.to(self.brain.device)
+
+                a_self = torch.from_numpy(self.efference_copy).float().unsqueeze(0).to(self.brain.device)
+
+                # === TEXT TENSOR ===
+                if text_indices:
+                    t_idx = torch.tensor([text_indices], dtype=torch.long).to(self.brain.device)
+                else:
+                    t_idx = torch.zeros(1, 1, dtype=torch.long).to(self.brain.device)
+
+                # === FORWARD PASS ===
                 self.brain.train()
+                outputs = self.brain(
+                    v, a_ext, a_self, t_idx,
+                    self.current_stress, self.energy.energy,
+                    input_source
+                )
 
-                with torch.no_grad():  # Use no_grad for inference to save memory
-                    outputs = self.brain(
-                        vision_tensor,
-                        audio_ext_tensor,
-                        audio_self_tensor,
-                        text_tensor,
-                        self.current_stress,
-                        self.energy.energy,
-                        input_source  # Pass the source
-                    )
+                # Update tracking
+                self.llm_reliance = outputs['llm_reliance'].item()
+                self.tts_gate = outputs['tts_gate'].item()
+                self.last_cry_suppression = outputs['cry_suppression'].item()
+                self.energy.conservation_gain = outputs['energy_conservation'].item()
 
-                # === UPDATE ENERGY CONSERVATION FROM PFC ===
-                energy_conservation = float(outputs['energy_conservation'].item())
-                self.energy.set_conservation(energy_conservation)
+                # === TRAINING ===
+                if text_indices and len(text_indices) > 1:
+                    target = torch.tensor(
+                        [text_indices[1:] + [text_indices[-1]]],
+                        dtype=torch.long
+                    ).to(self.brain.device)
 
-                # === LEARNING (weighted by input source) ===
-                loss_val = 0.0
-                input_weight = float(outputs['input_weight'].item())
-
-                if text_indices and len(text_indices) > 1 and input_source == "EXTERNAL":
-                    # Only do full learning from EXTERNAL sources
-                    # This prevents autistic-like feedback loops
-
-                    outputs = self.brain(
-                        vision_tensor,
-                        audio_ext_tensor,
-                        audio_self_tensor,
-                        text_tensor,
-                        self.current_stress,
-                        self.energy.energy,
-                        input_source
-                    )
-
-                    # Predict next token
-                    target = torch.tensor([text_indices[1:] + [text_indices[-1]]], dtype=torch.long).to(self.brain.device)
                     logits = outputs['text_logits']
-
-                    # Ensure logits match target length
                     if logits.dim() == 2:
                         logits = logits.unsqueeze(1).expand(-1, target.size(1), -1)
 
-                    # Weight loss by input importance
                     loss = F.cross_entropy(
                         logits.view(-1, self.brain.vocab_size),
                         target.view(-1),
                         ignore_index=-1
-                    ) * input_weight  # Scale by source importance
+                    ) * outputs['input_weight'].item()
 
                     self.optimizer.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
                     self.optimizer.step()
 
-                    loss_val = loss.item()
-                    self.last_loss = loss_val
+                    self.last_loss = loss.item()
 
                 # === UPDATE STRESS ===
                 confusion = min(1.0, self.last_loss / 5.0)
                 sensory_load = min(1.0, self.current_volume * 2.0)
                 self.current_stress = 0.7 * self.current_stress + 0.3 * (confusion * 0.7 + sensory_load * 0.3)
 
-                # === STORE MEMORY (occasionally) ===
+                # === STORE MEMORY ===
                 if loop_count % 10 == 0:
                     importance = self.last_loss + self.current_stress
                     if importance > 0.5:
                         self.brain.memory.store(outputs['hidden'].detach(), importance)
 
                 # === CHECK GROWTH ===
+                grew = False
                 if self.brain.check_growth(self.last_loss):
-                    new_layers = self.brain.grow_cortex()
+                    new_layers = self.brain.grow_cortex_layer()
                     self.syrinx.trigger_growth_sound()
                     self.sig_growth.emit(new_layers)
                     self.logger.log(self.last_loss, new_layers, len(self.vocab),
-                                  self.energy.energy, self.current_stress, fps, "GROWTH")
+                                    self.energy.energy, self.current_stress, fps, "LAYER_GROWTH")
                     print(f"[GROWTH] New cortex layer! Total: {new_layers}")
+                    grew = True
 
-                # === GENERATE OUTPUT ===
-                ai_msg = None
-                speak_drive = float(outputs['speak_drive'].item())
-                speak_impulse = float(outputs['speak_impulse'].item())
-                cry_suppression = float(outputs['cry_suppression'].item())
-                self.last_cry_suppression = cry_suppression
+                # Check cluster growth
+                if self.brain.check_cluster_growth(outputs['cluster'], self.last_loss):
+                    new_rank = self.brain.grow_cluster(outputs['cluster'])
+                    self.syrinx.trigger_growth_sound()
+                    print(f"[GROWTH] Cluster {outputs['cluster']} expanded to rank {new_rank}")
+                    grew = True
 
-                # Get scaffold controls from PFC
-                self.llm_reliance = float(outputs['llm_reliance'].item())
-                self.tts_gate = float(outputs['tts_gate'].item())
+                # === GENERATE RESPONSE ===
+                speak_drive = outputs['speak_drive'].item()
+                self.is_speaking = False
 
-                # === SPEAKING THRESHOLD (stress = less talking, more crying) ===
-                # When confused/stressed, the AI should CRY, not TALK
-                # Higher stress = higher threshold = harder to speak
-                base_threshold = 0.7  # Raised from 0.6
-                stress_penalty = self.current_stress * 0.4  # Stress makes it harder to talk
-                threshold = base_threshold + stress_penalty
+                if input_source == "EXTERNAL" and user_msg and self.energy.can_speak():
+                    if self.llm_reliance > 0.3:
+                        # Cocoon mode: use scaffold LLM
+                        ai_msg = self.scaffold_llm.chat(user_msg)
+                        if ai_msg:
+                            self.is_speaking = True
+                            self.energy.spend_speaking(len(ai_msg.split()))
+                            self.vocab.learn_text(ai_msg)
+                            if self.scaffold_tts.available and self.tts_gate > 0.4:
+                                self.scaffold_tts.speak_async(ai_msg)
+                    elif speak_drive > 0.5:
+                        # Butterfly mode: own voice
+                        idx = torch.argmax(outputs['text_logits'], dim=-1)
+                        words = [self.vocab.idx2word[i.item()] for i in idx.flatten()
+                                 if i.item() < len(self.vocab.idx2word)]
+                        ai_msg = " ".join(words[:10])
+                        if ai_msg and len(ai_msg) > 2:
+                            self.is_speaking = True
+                            self.energy.spend_speaking(len(ai_msg.split()))
 
-                # Also need minimum vocab and energy
-                can_speak = (
-                    speak_drive > threshold and
-                    self.energy.can_speak() and
-                    len(self.vocab) > 10 and  # Need some vocab first
-                    self.current_stress < 0.6  # Too stressed = can't talk coherently
-                )
+                self.energy.regenerate()
 
-                if can_speak:
-                    # === YOLK SYSTEM: Mix LLM with own output ===
-                    words_out = []
-
-                    # Get own prediction
-                    logits = outputs['text_logits'].clone().detach()
-                    recent = self.vocab.get_recent_indices()
-                    for idx in recent:
-                        if idx < logits.size(-1):
-                            logits[0, idx] += 1.5
-
-                    valid_len = len(self.vocab)
-                    if valid_len < logits.size(-1):
-                        logits[0, valid_len:] = float('-inf')
-
-                    probs = F.softmax(logits, dim=-1)
-
-                    # How many words to generate
-                    num_words = 1
-                    if speak_drive > threshold + 0.2:
-                        num_words = 2
-
-                    for _ in range(num_words):
-                        try:
-                            # Try own prediction first
-                            own_word_idx = torch.multinomial(probs, 1).item()
-                            own_word = self.vocab.idx2word.get(own_word_idx, "")
-
-                            # If LLM available and reliance is high, maybe use LLM instead
-                            if self.scaffold_llm.available and self.llm_reliance > 0.3:
-                                # Build context from recent words
-                                context = " ".join(self.recent_words[-5:]) if self.recent_words else ""
-                                llm_word = self.scaffold_llm.generate(context, max_tokens=3)
-
-                                if llm_word and random.random() < self.llm_reliance:
-                                    # Use LLM word (scaffolded)
-                                    words_out.append(llm_word.split()[0] if llm_word else own_word)
-                                else:
-                                    # Use own word (independent)
-                                    if own_word:
-                                        words_out.append(own_word)
-                            else:
-                                # No LLM or low reliance - use own word
-                                if own_word:
-                                    words_out.append(own_word)
-
-                        except Exception:
-                            break
-
-                    if words_out:
-                        ai_msg = " ".join(words_out)
-                        self.energy.spend_speaking(len(words_out))
-                        self.is_speaking = True
-                        self.last_ai_output = ai_msg
-
-                        # Update recent words for context
-                        self.recent_words.extend(words_out)
-                        self.recent_words = self.recent_words[-10:]  # Keep last 10
-
-                        # === TTS OUTPUT (if gate is open) ===
-                        if self.scaffold_tts.available and self.tts_gate > 0.3:
-                            # Speak asynchronously to not block
-                            self.scaffold_tts.speak_async(ai_msg, self.tts_gate)
-                else:
-                    self.is_speaking = False
-                    self.energy.regenerate(1.5 if speak_drive < 0.3 else 1.0)
-                    self.last_ai_output = None
-
-                self.energy.spend_thinking()
-
-                # Age the multi-speed processor
-                self.brain.multi_speed.age_tick()
-
-                # === UPDATE VOICE PARAMS (for audio callback) ===
-                voice_params = outputs['voice_params'][0].detach().cpu().numpy()
-                self.last_voice = voice_params
+                # Update voice params
+                voice = outputs['voice_params'].detach().cpu().numpy()
+                if voice.ndim > 1:
+                    voice = voice[0]
+                self.last_voice = voice
 
                 # === EMIT UPDATE ===
-                dt = time.time() - frame_time
-                frame_time = time.time()
-                fps = 0.9 * fps + 0.1 * (1.0 / max(0.001, dt))
-
-                activations = outputs['hidden'].detach().cpu().numpy().flatten()
+                elapsed = time.time() - loop_start
+                fps = 1.0 / max(0.001, elapsed)
 
                 update_data = {
-                    'activations': activations,
-                    'stress': self.current_stress,
-                    'speaking': self.is_speaking,
-                    'volume': self.current_volume,
                     'loss': self.last_loss,
-                    'layers': len(self.brain.cortex),
+                    'stress': self.current_stress,
+                    'layers': len(self.brain.cortex_layers),
                     'vocab_size': len(self.vocab),
                     'energy': self.energy.energy,
-                    'energy_conservation': self.energy.conservation_gain,
-                    'llm_reliance': self.llm_reliance,     # Scaffold: how much using LLM
-                    'tts_gate': self.tts_gate,             # Scaffold: TTS on/off
-                    'input_source': input_source,
+                    'volume': self.current_volume,
+                    'speaking': self.is_speaking,
                     'fps': fps,
-                    'real_image': gray,
+                    'input_source': input_source,
+                    'llm_reliance': self.llm_reliance,
+                    'tts_gate': self.tts_gate,
                     'cortex_image': outputs['cortex_image'].detach().cpu().numpy().reshape(32, 32),
                     'dream_image': outputs['dream_image'].detach().cpu().numpy().reshape(32, 32),
                     'actions': outputs['actions'].detach().cpu().numpy().flatten(),
                     'ai_msg': ai_msg,
                     'user_msg': user_msg,
                     'pac_msg': pac_msg,
-                    'cry_suppression': cry_suppression
+                    'cry_suppression': self.last_cry_suppression,
+                    'cluster': outputs['cluster'],
+                    'cluster_rank': self.brain.cortex.get_cluster_rank(outputs['cluster']),
+                    'grew': grew
                 }
 
                 self.sig_update.emit(update_data)
 
-                # Logging (less frequent)
+                # Logging
                 if loop_count % 30 == 0:
                     self.logger.log(
-                        self.last_loss,
-                        len(self.brain.cortex),
-                        len(self.vocab),
-                        self.energy.energy,
-                        self.current_stress,
-                        fps
+                        self.last_loss, len(self.brain.cortex_layers),
+                        len(self.vocab), self.energy.energy,
+                        self.current_stress, fps
                     )
 
                 # Frame timing
-                elapsed = time.time() - loop_start
-                sleep_time = max(0.01, 0.05 - elapsed)  # ~20 FPS target (more conservative)
+                sleep_time = max(0.01, 0.05 - elapsed)
                 time.sleep(sleep_time)
 
             except Exception as e:
-                print(f"[ERROR] Main loop exception: {e}")
+                print(f"[ERROR] Main loop: {e}")
                 import traceback
                 traceback.print_exc()
-                time.sleep(0.1)  # Don't spam on repeated errors
+                time.sleep(0.1)
 
         # Cleanup
         print("[WORKER] Shutting down...")
@@ -1528,77 +1550,58 @@ class VitalisWorker(QThread):
         print("[WORKER] Shutdown complete")
 
     def _audio_callback(self, outdata, frames, time_info, status):
-        """Audio output callback - must be thread-safe and never crash"""
+        """Audio output callback."""
         try:
-            # Get voice parameters safely
-            voice = getattr(self, 'last_voice', np.array([0.0, 0.0, 0.0]))
-
-            # Ensure voice is numpy array with correct shape
-            if torch.is_tensor(voice):
-                voice = voice.detach().cpu().numpy()
-            if not isinstance(voice, np.ndarray):
+            voice = self.last_voice
+            if not isinstance(voice, np.ndarray) or len(voice) < 3:
                 voice = np.array([0.0, 0.0, 0.0])
-            if len(voice) < 3:
-                voice = np.array([0.0, 0.0, 0.0])
-
-            # Get other params safely
-            stress = getattr(self, 'current_stress', 0.0)
-            energy = getattr(self, 'energy', None)
-            energy_val = energy.energy if energy else 0.5
-            cry_sup = getattr(self, 'last_cry_suppression', 0.5)
 
             wave = self.syrinx.generate(
                 frames,
                 tension=float(voice[0]),
                 chaos=float(voice[1]),
                 speak_impulse=float(voice[2]),
-                stress=float(stress),
-                energy=float(energy_val),
-                cry_suppression=float(cry_sup)
+                stress=float(self.current_stress),
+                energy=float(self.energy.energy),
+                cry_suppression=float(self.last_cry_suppression)
             )
 
-            # Store efference copy safely
-            try:
-                self.efference_copy = np.abs(np.fft.fft(wave.flatten(), 1024))[:1024]
-            except Exception:
-                pass
-
+            self.efference_copy = np.abs(np.fft.fft(wave.flatten(), 1024))[:1024]
             outdata[:] = wave
 
-        except Exception as e:
-            # On any error, output silence
+        except Exception:
             outdata[:] = np.zeros((frames, 1), dtype=np.float32)
 
     def _mic_callback(self, indata, frames, time_info, status):
-        """Microphone input callback - must be thread-safe"""
+        """Microphone input callback."""
         try:
             vol = float(np.linalg.norm(indata))
             self.current_volume = vol
             if vol > 0.01:
-                # Don't block if queue is full
                 try:
                     self.audio_queue.put_nowait(indata.copy())
                 except queue.Full:
                     pass
-        except Exception:
+        except:
             pass
 
 
 # ============================================================================
-# 🖥️ SECTION 6: UI COMPONENTS
+# 🖥️ SECTION 10: UI COMPONENTS
 # ============================================================================
+
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QTextEdit, QLineEdit, QProgressBar, QFrame, QSplitter, QGridLayout
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPixmap
+import pyqtgraph.opengl as gl
+
 
 class LivingOrb(gl.GLViewWidget):
     """
-    Organic neural visualization with data-driven waves:
-
-    WAVE CHANNELS (each visible as distinct patterns):
-    1. LEARNING - Cyan ribbons, pulse when loss decreases
-    2. STRESS - Red turbulent waves, intensity = stress level
-    3. GROWTH - Purple expanding pulse on cortex growth
-    4. VOICE - All waves synchronize + sphere breathes when speaking
-
-    Based on reference images: flowing ribbon topology around hollow core
+    Organic neural visualization with data-driven waves.
     """
 
     def __init__(self):
@@ -1607,90 +1610,68 @@ class LivingOrb(gl.GLViewWidget):
         self.opts['fov'] = 60
         self.setBackgroundColor('#030308')
 
-        # === GEOMETRY PARAMETERS ===
-        self.n_rings = 48          # MORE horizontal slices for detail
-        self.n_points = 100        # MORE points per ring for smoother waves
+        # Geometry
+        self.n_rings = 48
+        self.n_points = 100
         self.base_radius = 8.0
         self.current_radius = 8.0
 
-        # === WAVE STATE (driven by actual data) ===
-        self.learning_wave = np.zeros(self.n_rings)      # Learning activity
-        self.stress_wave = np.zeros(self.n_rings)        # Stress level
-        self.growth_wave = np.zeros(self.n_rings)        # Growth pulses
-        self.voice_wave = 0.0                            # Speaking intensity
+        # Wave state
+        self.learning_wave = np.zeros(self.n_rings)
+        self.stress_wave = np.zeros(self.n_rings)
+        self.growth_wave = np.zeros(self.n_rings)
+        self.voice_wave = 0.0
 
-        # Wave propagation phases
+        # Phases
         self.learning_phase = 0.0
         self.stress_phase = 0.0
         self.growth_phase = 0.0
         self.time = 0.0
 
-        # Data tracking for derivatives
+        # Data tracking
         self.last_loss = 1.0
         self.loss_derivative = 0.0
         self.growth_triggered = False
         self.speak_intensity = 0.0
 
-        # === CREATE GEOMETRY ===
+        # Create geometry
         self.ring_items = []
         self._create_rings()
-
-        # Add subtle core glow
         self._create_core()
 
     def _create_rings(self):
-        """Create the ring structure - stacked circles forming sphere"""
         for i in range(self.n_rings):
-            # Latitude from -π/2 to π/2
-            lat = -np.pi/2 + (np.pi * i / (self.n_rings - 1))
-
-            # Create ring at this latitude
-            theta = np.linspace(0, 2*np.pi, self.n_points)
+            lat = -np.pi / 2 + (np.pi * i / (self.n_rings - 1))
+            theta = np.linspace(0, 2 * np.pi, self.n_points)
             r = self.base_radius * np.cos(lat)
             z = self.base_radius * np.sin(lat)
 
             x = r * np.cos(theta)
             y = r * np.sin(theta)
             z_arr = np.full(self.n_points, z)
-
             pos = np.column_stack((x, y, z_arr))
 
-            # Base color - gradient from cyan (top) to magenta (bottom)
             t = i / (self.n_rings - 1)
-            base_color = np.array([
-                0.2 + 0.3 * t,      # R: more at bottom
-                0.8 - 0.3 * t,      # G: more at top
-                0.9,                 # B: constant high
-                0.8                  # A: more opaque for visibility
-            ])
+            base_color = np.array([0.2 + 0.3 * t, 0.8 - 0.3 * t, 0.9, 0.8])
             colors = np.tile(base_color, (self.n_points, 1))
 
             line = gl.GLLinePlotItem(
-                pos=pos,
-                color=colors,
-                width=3.5,           # THICKER lines for visibility
-                antialias=True,
-                mode='line_strip'
+                pos=pos, color=colors, width=3.5,
+                antialias=True, mode='line_strip'
             )
             self.addItem(line)
             self.ring_items.append({
-                'item': line,
-                'base_lat': lat,
-                'base_r': r,
-                'base_z': z,
-                'theta': theta,
-                'ring_idx': i
+                'item': line, 'base_lat': lat, 'base_r': r,
+                'base_z': z, 'theta': theta, 'ring_idx': i
             })
 
     def _create_core(self):
-        """Create inner core glow effect - BRIGHTER"""
-        # Larger inner sphere of points for core glow
-        n = 400  # More points
+        n = 400
         indices = np.arange(0, n, dtype=float) + 0.5
         phi = np.arccos(1 - 2 * indices / n)
-        theta = np.pi * (1 + 5**0.5) * indices
+        theta = np.pi * (1 + 5 ** 0.5) * indices
 
-        r = 3.0  # Bigger core
+        r = 3.0
         x = r * np.cos(theta) * np.sin(phi)
         y = r * np.sin(theta) * np.sin(phi)
         z = r * np.cos(phi)
@@ -1699,75 +1680,54 @@ class LivingOrb(gl.GLViewWidget):
         self.core_colors = np.ones((n, 4)) * np.array([0.4, 0.6, 0.9, 0.5])
 
         self.core = gl.GLScatterPlotItem(
-            pos=self.core_pos,
-            color=self.core_colors,
-            size=5,  # Bigger points
-            pxMode=True
+            pos=self.core_pos, color=self.core_colors, size=5, pxMode=True
         )
         self.addItem(self.core)
 
     def set_data(self, loss: float, stress: float, is_speaking: bool,
                  growth_event: bool, voice_intensity: float = 0.0):
-        """
-        Feed actual data to drive the visualization.
-        Call this every frame with current brain state.
-        """
-        # === LEARNING WAVE ===
-        # Driven by loss DECREASE (active learning)
-        loss_delta = self.last_loss - loss
-        self.loss_derivative = 0.8 * self.loss_derivative + 0.2 * max(0, loss_delta * 10)
+        """Feed actual data to drive visualization."""
+        # Learning wave
+        self.loss_derivative = self.last_loss - loss
         self.last_loss = loss
 
-        # Propagate learning wave from center outward - MODERATE
-        self.learning_phase += 0.15 * (1 + self.loss_derivative * 1.5)
-        for i in range(self.n_rings):
-            dist_from_center = abs(i - self.n_rings/2) / (self.n_rings/2)
-            wave_val = np.sin(self.learning_phase - dist_from_center * 3) * 0.5 + 0.5
-            # Base wave + learning boost
-            self.learning_wave[i] = wave_val * (self.loss_derivative * 2.5 + 0.2)
+        if self.loss_derivative > 0:
+            intensity = min(1.0, self.loss_derivative * 10)
+            self.learning_wave = 0.8 * self.learning_wave + 0.2 * intensity
+        else:
+            self.learning_wave *= 0.95
 
-        # === STRESS WAVE ===
-        # Turbulent, chaotic when stressed - MODERATE
-        self.stress_phase += 0.2 * (1 + stress * 2)
-        for i in range(self.n_rings):
-            # Multiple frequencies for turbulence
-            f1 = np.sin(self.stress_phase * 1.5 + i * 0.5)
-            f2 = np.sin(self.stress_phase * 2.3 + i * 0.8) * 0.6
-            f3 = np.sin(self.stress_phase * 3.7 + i * 0.3) * 0.4
-            # Moderate stress response
-            self.stress_wave[i] = (f1 + f2 + f3) * (stress * 1.0 + 0.05)
+        self.learning_phase += 0.15
 
-        # === GROWTH WAVE ===
-        # One-shot expanding pulse - MODERATE
+        # Stress wave
+        self.stress_wave = 0.7 * self.stress_wave + 0.3 * stress
+        if stress > 0.5:
+            self.stress_phase += 0.3 * stress
+        else:
+            self.stress_phase += 0.1
+
+        # Growth wave
         if growth_event:
             self.growth_triggered = True
             self.growth_phase = 0.0
+            self.base_radius += 0.5
 
         if self.growth_triggered:
-            self.growth_phase += 0.08
-            for i in range(self.n_rings):
-                dist = abs(i - self.n_rings/2) / (self.n_rings/2)
-                if dist < self.growth_phase:
-                    intensity = max(0, 1 - (self.growth_phase - dist) * 1.5)
-                    self.growth_wave[i] = intensity * 2.0
-                else:
-                    self.growth_wave[i] *= 0.92
-
-            if self.growth_phase > 2.5:
+            self.growth_wave = np.maximum(self.growth_wave, np.exp(-self.growth_phase * 0.5))
+            self.growth_phase += 0.1
+            if self.growth_phase > 5:
                 self.growth_triggered = False
         else:
-            self.growth_wave *= 0.92
+            self.growth_wave *= 0.95
 
-        # === VOICE WAVE ===
-        # When speaking, all waves synchronize and sphere breathes - MODERATE
+        # Voice
+        self.speak_intensity = voice_intensity if is_speaking else self.speak_intensity * 0.9
         if is_speaking:
-            self.speak_intensity = min(1.0, self.speak_intensity + 0.15)
-            self.voice_wave = 0.7 + 0.3 * np.sin(self.time * 8)
+            self.voice_wave = 0.5 + 0.5 * np.sin(self.time * 10)
         else:
-            self.speak_intensity = max(0, self.speak_intensity - 0.04)
             self.voice_wave = 0.0
 
-        # Sphere breathing when speaking - MODERATE
+        # Breathing
         if is_speaking:
             self.current_radius = self.base_radius * (1.0 + 0.18 * np.sin(self.time * 7))
         else:
@@ -1776,109 +1736,55 @@ class LivingOrb(gl.GLViewWidget):
         self.time += 0.05
 
     def update_visualization(self):
-        """Update all ring geometries based on current wave state"""
+        """Update ring geometries."""
         try:
             for ring_data in self.ring_items:
                 i = ring_data['ring_idx']
                 lat = ring_data['base_lat']
                 theta = ring_data['theta']
 
-                # Base radius at this latitude (sphere shape)
                 base_r = self.current_radius * np.cos(lat)
                 base_z = self.current_radius * np.sin(lat)
 
-                # === APPLY WAVE DEFORMATIONS (BALANCED) ===
-                # Each wave adds radial displacement
-
-                # Learning: smooth sine wave - moderate amplitude
+                # Wave deformations
                 learn_disp = self.learning_wave[i] * np.sin(theta * 3 + self.learning_phase) * 1.8
-
-                # Stress: turbulent high-frequency - noticeable but not crazy
                 stress_disp = self.stress_wave[i] * (
                     np.sin(theta * 7 + self.stress_phase) * 1.2 +
-                    np.sin(theta * 11 + self.stress_phase * 1.5) * 0.8 +
-                    np.sin(theta * 5 + self.stress_phase * 2.3) * 0.5
+                    np.sin(theta * 11 + self.stress_phase * 1.5) * 0.8
                 )
-
-                # Growth: uniform expansion pulse - visible but not extreme
                 growth_disp = self.growth_wave[i] * np.sin(theta * 2 + self.growth_phase * 5) * 2.5
 
-                # Voice: synchronized pulse on all channels - moderate sync
                 if self.speak_intensity > 0.1:
                     voice_sync = self.speak_intensity * np.sin(self.time * 10) * 1.5
                     learn_disp += voice_sync
                     stress_disp += voice_sync * 0.5
-                    growth_disp += voice_sync * 0.3
 
-                # Add subtle ambient wave for liveliness even when idle
-                ambient = np.sin(theta * 4 + self.time * 2) * 0.15 + np.sin(theta * 6 - self.time * 1.5) * 0.1
+                ambient = np.sin(theta * 4 + self.time * 2) * 0.15
 
-                # Combined radial displacement
                 total_disp = learn_disp + stress_disp + growth_disp + ambient
                 r = base_r + total_disp
 
-                # Compute positions with Z variation too for 3D wave effect
                 x = r * np.cos(theta)
                 y = r * np.sin(theta)
-                z_wave = (learn_disp * 0.2) + (stress_disp * 0.15) + (growth_disp * 0.25)
-                z = np.full(self.n_points, base_z) + z_wave
+                z_arr = np.full(self.n_points, base_z)
+                pos = np.column_stack((x, y, z_arr))
 
-                pos = np.column_stack((x, y, z))
-
-                # === COMPUTE COLORS (MORE VIVID) ===
-                # Base: cyan/blue gradient
+                # Colors
                 t = i / (self.n_rings - 1)
+                r_col = 0.2 + 0.3 * t + self.stress_wave[i] * 0.5 + self.speak_intensity * 0.3
+                g_col = 0.8 - 0.3 * t + self.learning_wave[i] * 0.3
+                b_col = 0.9 + self.growth_wave[i] * 0.1
+                alpha = 0.7 + self.learning_wave[i] * 0.2 + self.speak_intensity * 0.1
 
                 colors = np.zeros((self.n_points, 4))
-
-                for j in range(self.n_points):
-                    # Start with base color
-                    r_col = 0.1 + 0.15 * t
-                    g_col = 0.6 - 0.15 * t
-                    b_col = 0.85
-
-                    # Add CYAN for learning - MORE INTENSE
-                    if self.learning_wave[i] > 0.05:
-                        intensity = min(1.0, self.learning_wave[i])
-                        g_col += intensity * 0.5
-                        b_col += intensity * 0.3
-                        r_col -= intensity * 0.1
-
-                    # Add RED for stress - MUCH MORE VISIBLE
-                    if abs(self.stress_wave[i]) > 0.05:
-                        intensity = min(1.0, abs(self.stress_wave[i]))
-                        r_col += intensity * 1.0
-                        g_col -= intensity * 0.4
-                        b_col -= intensity * 0.3
-
-                    # Add PURPLE for growth - VIBRANT
-                    if self.growth_wave[i] > 0.05:
-                        intensity = min(1.0, self.growth_wave[i])
-                        r_col += intensity * 0.7
-                        b_col += intensity * 0.5
-                        g_col -= intensity * 0.2
-
-                    # Brighten all when speaking - GLOWING EFFECT
-                    if self.speak_intensity > 0.1:
-                        brightness = 1 + self.speak_intensity * 0.8
-                        r_col *= brightness
-                        g_col *= brightness
-                        b_col *= brightness
-
-                    # Alpha based on wave activity - MORE OPAQUE when active
-                    wave_activity = abs(total_disp[j]) / 3.0
-                    alpha = 0.5 + 0.5 * min(1.0, wave_activity)
-
-                    colors[j] = [
-                        min(1.0, r_col),
-                        min(1.0, g_col),
-                        min(1.0, b_col),
-                        min(0.9, alpha)
-                    ]
+                colors[:, 0] = min(1.0, r_col)
+                colors[:, 1] = min(1.0, g_col)
+                colors[:, 2] = min(1.0, b_col)
+                colors[:, 3] = min(0.9, alpha)
 
                 ring_data['item'].setData(pos=pos, color=colors)
 
-            # Update core glow based on activity - MORE DYNAMIC
+            # Core
             total_activity = (
                 np.mean(np.abs(self.learning_wave)) * 2 +
                 np.mean(np.abs(self.stress_wave)) * 1.5 +
@@ -1888,7 +1794,6 @@ class LivingOrb(gl.GLViewWidget):
 
             core_brightness = 0.4 + min(0.6, total_activity * 0.4)
 
-            # Dynamic core colors based on dominant wave
             base_r = 0.3 + self.speak_intensity * 0.6 + np.mean(np.abs(self.stress_wave)) * 0.5
             base_g = 0.5 + np.mean(self.learning_wave) * 0.5
             base_b = 0.8 + np.mean(self.growth_wave) * 0.2
@@ -1898,29 +1803,25 @@ class LivingOrb(gl.GLViewWidget):
             self.core_colors[:, 2] = min(1.0, base_b)
             self.core_colors[:, 3] = min(0.8, core_brightness)
 
-            # Pulse core when speaking - BIGGER pulse
             if self.speak_intensity > 0.1:
                 pulse = 1 + 0.5 * np.sin(self.time * 10)
                 self.core.setData(pos=self.core_pos * pulse, color=self.core_colors)
             else:
                 self.core.setData(color=self.core_colors)
 
-            # Slow rotation
             self.opts['azimuth'] = self.opts.get('azimuth', 0) + 0.3
 
         except Exception as e:
-            print(f"[ORB] Visualization error: {e}")
+            print(f"[ORB] Error: {e}")
 
     def trigger_growth(self):
-        """Call this when cortex growth occurs"""
         self.growth_triggered = True
         self.growth_phase = 0.0
-        # Also add more rings for visual growth
         self.base_radius += 0.5
 
 
 class SciFiPanel(QFrame):
-    """Styled panel for UI sections"""
+    """Styled panel for UI sections."""
 
     def __init__(self, title: str):
         super().__init__()
@@ -1936,146 +1837,132 @@ class SciFiPanel(QFrame):
         label = QLabel(title)
         label.setStyleSheet("""
             color: #00FFFF;
-            font-family: 'Segoe UI';
+            font-family: 'Consolas', monospace;
             font-weight: bold;
             font-size: 10pt;
             border: none;
             background: none;
         """)
         layout.addWidget(label)
-
         self.content = layout
 
 
 class MainWindow(QMainWindow):
-    """Main application window"""
+    """Main application window."""
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MagnumOpusVitalis: The Living Intelligence")
-        self.resize(1600, 900)
+        self.setWindowTitle("MagnumOpusVitalis v2.0 - Genesis Unified")
+        self.resize(1700, 950)
         self.setStyleSheet("""
-            background-color: #050505;
-            font-family: 'Consolas';
-            color: #00FF9D;
+            background: #050505;
+            color: #00FF88;
+            font-family: 'Consolas', monospace;
         """)
-        self.showMaximized()
 
-        # Central widget
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
-        # === LEFT: NEURAL CORE ===
-        left_panel = SciFiPanel(":: NEURAL CORE ::")
+        # === LEFT: ORB + STATS ===
+        left = QWidget()
+        l_layout = QVBoxLayout(left)
+        l_layout.setContentsMargins(0, 0, 0, 0)
+
         self.orb = LivingOrb()
-        left_panel.content.addWidget(self.orb, 1)
+        self.orb.setMinimumSize(500, 500)
+        l_layout.addWidget(self.orb, 4)
 
+        # Stats panel
+        stats_panel = SciFiPanel("NEURAL TELEMETRY")
         self.stats_label = QLabel("INITIALIZING...")
-        self.stats_label.setStyleSheet("color: #00FF9D; font-size: 11pt; border: none;")
-        left_panel.content.addWidget(self.stats_label)
+        self.stats_label.setStyleSheet("color: #00FF88; font-size: 11pt; border: none;")
+        self.stats_label.setWordWrap(True)
+        stats_panel.content.addWidget(self.stats_label)
+        l_layout.addWidget(stats_panel, 1)
 
-        # Wave legend
-        legend = QLabel("◆ CYAN=Learning  ◆ RED=Stress  ◆ PURPLE=Growth  ◆ ALL=Voice")
-        legend.setStyleSheet("color: #666; font-size: 8pt; border: none;")
-        left_panel.content.addWidget(legend)
+        main_layout.addWidget(left, 2)
 
-        main_layout.addWidget(left_panel, 2)
-
-        # === RIGHT: DATA STREAMS ===
+        # === RIGHT: MONITORS + CHAT ===
         right = QWidget()
         r_layout = QVBoxLayout(right)
         r_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Optical Array
-        vis_panel = SciFiPanel(":: OPTICAL ARRAY ::")
-        h_vis = QHBoxLayout()
+        # Top: Optical array
+        optical_panel = SciFiPanel("OPTICAL ARRAY")
+        opt_layout = QHBoxLayout()
 
-        self.screens = []
-        for title in ["RETINA", "CORTEX", "DREAM"]:
-            v = QLabel()
-            v.setFixedSize(180, 180)
-            v.setStyleSheet("border: 1px solid #004455; background: #000;")
-            v.setScaledContents(True)
+        # Cortex view
+        cortex_frame = QFrame()
+        cortex_layout = QVBoxLayout(cortex_frame)
+        cortex_layout.setContentsMargins(2, 2, 2, 2)
+        self.cortex_label = QLabel("CORTEX")
+        self.cortex_label.setStyleSheet("color: #00FF00; font-size: 9pt; border: none;")
+        self.cortex_img = QLabel()
+        self.cortex_img.setFixedSize(160, 160)
+        self.cortex_img.setStyleSheet("background: #000; border: 1px solid #00FF00;")
+        cortex_layout.addWidget(self.cortex_label)
+        cortex_layout.addWidget(self.cortex_img)
+        opt_layout.addWidget(cortex_frame)
 
-            box = QVBoxLayout()
-            lbl = QLabel(title)
-            lbl.setStyleSheet("color: #00FFFF; font-size: 9pt;")
-            box.addWidget(lbl)
-            box.addWidget(v)
-            h_vis.addLayout(box)
-            self.screens.append(v)
+        # Dream view
+        dream_frame = QFrame()
+        dream_layout = QVBoxLayout(dream_frame)
+        dream_layout.setContentsMargins(2, 2, 2, 2)
+        self.dream_label = QLabel("DREAM")
+        self.dream_label.setStyleSheet("color: #FF00FF; font-size: 9pt; border: none;")
+        self.dream_img = QLabel()
+        self.dream_img.setFixedSize(160, 160)
+        self.dream_img.setStyleSheet("background: #000; border: 1px solid #FF00FF;")
+        dream_layout.addWidget(self.dream_label)
+        dream_layout.addWidget(self.dream_img)
+        opt_layout.addWidget(dream_frame)
 
-        vis_panel.content.addLayout(h_vis)
-        r_layout.addWidget(vis_panel)
+        optical_panel.content.addLayout(opt_layout)
+        r_layout.addWidget(optical_panel, 1)
 
-        # Telemetry
-        tel_panel = SciFiPanel(":: PREFRONTAL TELEMETRY ::")
-        self.bars = []
-        grid = QGridLayout()
+        # Middle: Telemetry bars
+        telem_panel = SciFiPanel("PFC OUTPUTS")
+        telem_grid = QGridLayout()
 
-        # 8 bars now: 6 PFC outputs + 2 scaffold indicators
-        labels = ["VIS GAIN", "AUD GAIN", "DREAM", "SPEAK", "CRY SUP", "CONSERVE", "LLM YOLK", "TTS GATE"]
-        colors = ["#00FFFF", "#FF00FF", "#FFFF00", "#FF3300", "#00FF00", "#00AAFF", "#FF8800", "#88FF00"]
+        self.pfc_bars = {}
+        bar_names = ['VIS', 'AUD', 'DRM', 'SPK', 'CRY↓', 'NRG↓', 'LLM', 'TTS']
+        for i, name in enumerate(bar_names):
+            lbl = QLabel(name)
+            lbl.setStyleSheet("color: #888; font-size: 8pt; border: none;")
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(12)
+            bar.setStyleSheet("::chunk { background: #00FFFF; }")
+            telem_grid.addWidget(lbl, i // 4, (i % 4) * 2)
+            telem_grid.addWidget(bar, i // 4, (i % 4) * 2 + 1)
+            self.pfc_bars[name] = bar
 
-        for i, txt in enumerate(labels):
-            l = QLabel(txt)
-            l.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            l.setStyleSheet("color: #888; font-size: 9pt;")
-
-            b = QProgressBar()
-            b.setRange(0, 100)
-            b.setFixedHeight(15)
-            b.setStyleSheet(f"""
-                QProgressBar {{ background: #111; border: none; }}
-                QProgressBar::chunk {{ background: {colors[i]}; }}
-            """)
-
-            grid.addWidget(l, i, 0)
-            grid.addWidget(b, i, 1)
-            self.bars.append(b)
+        telem_panel.content.addLayout(telem_grid)
 
         # Energy bar
-        l = QLabel("ENERGY")
-        l.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        l.setStyleSheet("color: #888; font-size: 9pt;")
+        energy_label = QLabel("BIO-ENERGY")
+        energy_label.setStyleSheet("color: #FFD700; font-size: 9pt; border: none;")
         self.energy_bar = QProgressBar()
         self.energy_bar.setRange(0, 100)
-        self.energy_bar.setFixedHeight(15)
-        self.energy_bar.setStyleSheet("""
-            QProgressBar { background: #111; border: none; }
-            QProgressBar::chunk { background: #00AAFF; }
-        """)
-        grid.addWidget(l, len(labels), 0)
-        grid.addWidget(self.energy_bar, len(labels), 1)
+        self.energy_bar.setStyleSheet("::chunk { background: #FFD700; }")
+        telem_panel.content.addWidget(energy_label)
+        telem_panel.content.addWidget(self.energy_bar)
 
-        tel_panel.content.addLayout(grid)
-        r_layout.addWidget(tel_panel)
+        r_layout.addWidget(telem_panel, 1)
 
-        # Chat panels
-        split = QHBoxLayout()
+        # Bottom: Chat
+        split = QSplitter(Qt.Vertical)
 
-        # Ingestion stream
-        mat_panel = SciFiPanel(":: KNOWLEDGE INGESTION ::")
-        self.matrix_txt = QTextEdit()
-        self.matrix_txt.setReadOnly(True)
-        self.matrix_txt.setStyleSheet("""
-            background: #000500;
-            color: #005500;
-            border: none;
-            font-size: 8pt;
-            font-family: 'Courier New';
-        """)
-        mat_panel.content.addWidget(self.matrix_txt)
-        split.addWidget(mat_panel, 1)
-
-        # Communication
-        chat_panel = SciFiPanel(":: COMM LINK ::")
+        chat_panel = SciFiPanel("COMM LINK")
         self.chat_txt = QTextEdit()
         self.chat_txt.setReadOnly(True)
         self.chat_txt.setStyleSheet("""
             background: #001122;
-            color: #00FF9D;
+            color: #00FF88;
             border: none;
             font-size: 11pt;
             font-weight: bold;
@@ -2093,9 +1980,9 @@ class MainWindow(QMainWindow):
 
         chat_panel.content.addWidget(self.chat_txt)
         chat_panel.content.addWidget(self.input_field)
-        split.addWidget(chat_panel, 2)
+        split.addWidget(chat_panel)
 
-        r_layout.addLayout(split)
+        r_layout.addWidget(split, 2)
         main_layout.addWidget(right, 3)
 
         # === START WORKER ===
@@ -2114,63 +2001,55 @@ class MainWindow(QMainWindow):
 
     def _on_update(self, data: dict):
         try:
-            # Feed actual data to the orb visualization
+            # Orb visualization
             self.orb.set_data(
                 loss=data['loss'],
                 stress=data['stress'],
                 is_speaking=data['speaking'],
-                growth_event=False,  # Growth handled separately via signal
+                growth_event=data.get('grew', False),
                 voice_intensity=data['volume'] if data['speaking'] else 0.0
             )
-
-            # Update the visualization
             self.orb.update_visualization()
 
-            # Update stats
-            mode = "SPEAKING" if data['speaking'] else "LISTENING"
-            mode_color = "#FF3300" if data['speaking'] else "#00FFFF"
-
-            # Show input source
-            src = data.get('input_source', 'AMBIENT')
-            src_color = "#00FF00" if src == "EXTERNAL" else "#666666"
+            # Stats
+            mode = "COCOON" if data['llm_reliance'] > 0.3 else "BUTTERFLY"
+            mode_color = "#FF9900" if mode == "COCOON" else "#00FF00"
+            src_color = "#00FF00" if data['input_source'] == "EXTERNAL" else "#666666"
 
             self.stats_label.setText(
                 f"LAYERS: {data['layers']} | "
                 f"VOCAB: {data['vocab_size']} | "
                 f"LOSS: {data['loss']:.3f} | "
+                f"CLUSTER: {data['cluster']}(r{data['cluster_rank']}) | "
                 f"<span style='color:{mode_color}'>{mode}</span> | "
-                f"<span style='color:{src_color}'>IN:{src[:3]}</span> | "
-                f"LLM:{int(data.get('llm_reliance', 0.9)*100)}% | "
-                f"{data['fps']:.1f} FPS"
+                f"<span style='color:{src_color}'>IN:{data['input_source']}</span> | "
+                f"FPS: {data['fps']:.1f}"
             )
 
-            # Update bars (8 PFC outputs)
-            actions = data['actions']
-            for i, bar in enumerate(self.bars):
-                if i < len(actions):
-                    bar.setValue(int(min(actions[i], 1.0) * 100))
+            # PFC bars
+            if 'actions' in data and len(data['actions']) >= 8:
+                actions = data['actions']
+                bar_map = ['VIS', 'AUD', 'DRM', 'SPK', 'CRY↓', 'NRG↓', 'LLM', 'TTS']
+                for i, name in enumerate(bar_map):
+                    self.pfc_bars[name].setValue(int(actions[i] * 100))
 
-            self.energy_bar.setValue(int(min(data['energy'], 1.0) * 100))
+            # Energy
+            self.energy_bar.setValue(int(data['energy'] * 100))
 
-            # Update screens
+            # Images
             def to_pixmap(arr):
-                try:
-                    img = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
-                    img = cv2.resize(img, (180, 180))
-                    return QPixmap.fromImage(QImage(img, 180, 180, 180, QImage.Format_Grayscale8))
-                except Exception:
-                    return QPixmap()
+                img = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+                qimg = QImage(img, 32, 32, 32, QImage.Format_Grayscale8)
+                return QPixmap.fromImage(qimg).scaled(160, 160)
 
-            self.screens[0].setPixmap(to_pixmap(data['real_image']))
-            self.screens[1].setPixmap(to_pixmap(data['cortex_image']))
-            self.screens[2].setPixmap(to_pixmap(data['dream_image']))
+            self.cortex_img.setPixmap(to_pixmap(data['cortex_image']))
+            self.dream_img.setPixmap(to_pixmap(data['dream_image']))
 
-            # Update chat
+            # Chat messages
             if data.get('ai_msg'):
                 self.chat_txt.append(f"<span style='color:#00FF00'>AI: {data['ai_msg']}</span>")
-
             if data.get('pac_msg'):
-                self.matrix_txt.append(f"<span style='color:#004400'>{data['pac_msg']}</span>")
+                self.chat_txt.append(f"<span style='color:#555555'>{data['pac_msg']}</span>")
 
         except Exception as e:
             print(f"[UI] Update error: {e}")
@@ -2178,11 +2057,11 @@ class MainWindow(QMainWindow):
     def _on_growth(self, layers: int):
         self.orb.trigger_growth()
         self.chat_txt.append(
-            "<b style='color:#FF3300'>*** CORTICAL EXPANSION DETECTED ***</b>"
+            f"<b style='color:#FF3300'>*** NEURAL EXPANSION *** Layers: {layers}</b>"
         )
 
     def _on_pacman(self, msg: str):
-        self.matrix_txt.append(f"<span style='color:#00AA00'>{msg}</span>")
+        self.chat_txt.append(f"<span style='color:#555555'>{msg}</span>")
 
     def closeEvent(self, event):
         self.worker.running = False
@@ -2191,19 +2070,14 @@ class MainWindow(QMainWindow):
 
 
 # ============================================================================
-# 🚀 SECTION 7: ENTRY POINT
+# 🚀 ENTRY POINT
 # ============================================================================
 
 if __name__ == "__main__":
-    print("""
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║           MagnumOpusVitalis: The Living Intelligence          ║
-    ║                                                               ║
-    ║  "A seed that grows, not a machine that thinks."              ║
-    ║                                                               ║
-    ║  ARCHITECT: Alan Hourmand                                     ║
-    ╚═══════════════════════════════════════════════════════════════╝
-    """)
+    print("=" * 60)
+    print("MAGNUMOPUSVITALIS v2.0 - Genesis Unified")
+    print("A seed that grows, not a machine that thinks.")
+    print("=" * 60)
 
     app = QApplication(sys.argv)
     window = MainWindow()
