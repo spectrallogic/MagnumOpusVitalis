@@ -335,35 +335,76 @@ class TabularRasaVocabulary:
         return len(self.idx2word)
 
 
+
 class EnergySystem:
-    """Energy economics - speaking costs energy."""
+    """
+    Energy economics - Time-Independent (Wall Clock) Implementation.
+    This fixes the 'H100 Problem' by tying metabolism to seconds, not frames.
+    """
 
     def __init__(self):
         self.energy = 0.8  # Start higher (80%)
         self.conservation_gain = 0.5
-        # Removed self.regen_counter - we regen every frame now
+
+        # TIME TRACKING
+        self.last_time = time.time()
+
+        # RATES (Per Second, not per frame)
+        # This ensures consistent behavior regardless of FPS
+        self.metabolic_rate = 0.02  # Cost of existing per second
+        self.regen_rate_base = 0.05  # Recovery per second
 
     def can_speak(self) -> bool:
         return self.energy > 0.15
 
     def spend_speaking(self, num_words: int = 1):
-        # Cap max words charged per frame to 5 to prevent instant death
+        """
+        Event-based cost. Speaking is an impulse, so it costs energy instantly
+        regardless of time.
+        """
+        # Cap max words charged per event to prevent instant death
         capped_words = min(num_words, 5)
 
-        base_cost = 0.04  # Was 0.08
-        word_cost = 0.01 * capped_words # Was 0.02
+        base_cost = 0.04
+        word_cost = 0.01 * capped_words
+
+        # Conservation gain reduces cost
         total_cost = (base_cost + word_cost) * (1.2 - self.conservation_gain * 0.4)
+
         self.energy = max(0.0, self.energy - total_cost)
+        # print(f"[ENERGY] Spent {total_cost:.3f}, remaining: {self.energy:.2f}")
 
     def spend_thinking(self):
-        """Small cost just for processing each frame"""
-        self.energy = max(0.0, self.energy - 0.0005) # Halved the thinking cost
+        """
+        Legacy wrapper.
+        We now handle the 'thinking cost' inside regenerate() to ensure
+        we only calculate the time delta (dt) once per frame.
+        """
+        pass
 
     def regenerate(self):
-        # Regenerate EVERY frame
-        # Base regen (0.001) > Thinking Cost (0.0005) = Net Positive Life
-        regen = 0.001 * (0.8 + self.conservation_gain * 0.5)
-        self.energy = min(1.0, self.energy + regen)
+        """
+        Handles the entire metabolic cycle (Burn + Regen) based on elapsed time.
+        """
+        # Calculate time passed since last frame
+        current_time = time.time()
+        dt = current_time - self.last_time
+        self.last_time = current_time
+
+        # Safety: If lag spike > 1 second, clamp dt to avoid massive jumps
+        if dt > 1.0:
+            dt = 0.0
+
+        # 1. Burn 'Thinking' Energy (Constant drain)
+        drain = self.metabolic_rate * dt
+
+        # 2. Regenerate Energy (Constant recovery)
+        # Higher conservation_gain = Faster regen
+        recovery = self.regen_rate_base * (0.8 + self.conservation_gain * 0.5) * dt
+
+        # Apply Net Change
+        net_change = recovery - drain
+        self.energy = min(1.0, max(0.0, self.energy + net_change))
 
 
 class SessionLogger:
