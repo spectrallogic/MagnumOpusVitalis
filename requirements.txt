@@ -1,0 +1,13 @@
+# Core requirements (minimal)
+torch>=2.0.0
+numpy>=1.21.0
+
+# For benchmark
+# No additional requirements - uses built-in data
+
+# For full demo (optional)
+# PySide6>=6.4.0
+# pyqtgraph>=0.13.0
+# opencv-python>=4.7.0
+# sounddevice>=0.4.6
+# transformers>=4.30.0  # Only if using LLM scaffold
