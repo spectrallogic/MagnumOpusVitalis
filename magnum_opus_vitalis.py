@@ -2,7 +2,7 @@
 MagnumOpusVitalis: The Living Intelligence
 ================================================================
 ARCHITECT: Alan Hourmand
-VERSION: 2.1 (Genesis Unified + Hormone Update)
+VERSION: 2.2 (Genesis Unified + Hormone + Synaptic Fatigue)
 
 PHILOSOPHY:
 "A seed that grows, not a machine that thinks."
@@ -13,6 +13,7 @@ INTEGRATIONS:
 - TemporalConsciousness (specious present)
 - Biological Hormone System (Oxytocin/Stress regulation)
 - Emotional Audio Synthesis (FM Synthesis Droid/Infant)
+- Synaptic Fatigue (Natural repetition inhibition)
 
 CORE PRINCIPLES:
 1. TABULA RASA - Starts knowing nothing, learns everything
@@ -346,12 +347,13 @@ class EnergySystem:
         return self.energy > 0.15
 
     def spend_speaking(self, num_words: int = 1):
-        # Reduced base cost so it can talk more
+        # Cap max words charged per frame to 5 to prevent instant death
+        capped_words = min(num_words, 5)
+
         base_cost = 0.04  # Was 0.08
-        word_cost = 0.01 * num_words # Was 0.02
+        word_cost = 0.01 * capped_words # Was 0.02
         total_cost = (base_cost + word_cost) * (1.2 - self.conservation_gain * 0.4)
         self.energy = max(0.0, self.energy - total_cost)
-        print(f"[ENERGY] Spent {total_cost:.3f} for {num_words} words, remaining: {self.energy:.2f}")
 
     def spend_thinking(self):
         """Small cost just for processing each frame"""
@@ -964,10 +966,15 @@ class OmniBrain(nn.Module):
         # === STATE ===
         self.pfc_state: Optional[torch.Tensor] = None
         self.growth_pressure = 0.0
-        self.growth_threshold = 3.5
-        self.growth_patience = 250
+        self.growth_threshold = 3.5  # Lowered slightly for responsiveness
+        self.growth_patience = 150   # Set to ~3-4 seconds to prevent panic growth
         self.steps_above_threshold = 0
         self.current_cluster = 0
+
+        # === SYNAPTIC FATIGUE (For Repetition Inhibition) ===
+        # Tracks how "tired" each word neuron is.
+        # Initialize on device (cuda/cpu)
+        self.register_buffer('synaptic_fatigue', torch.zeros(vocab_size))
 
         # Per-cluster stats for growth
         self.cluster_stats = [GrowthStats() for _ in range(num_clusters)]
@@ -1120,7 +1127,17 @@ class OmniBrain(nn.Module):
         # === OUTPUTS ===
         cortex_img = torch.sigmoid(self.vis_out(h))
         voice_params = torch.sigmoid(self.voice_ctrl(h))
-        text_logits = self.text_out(dream_h)
+
+        # === TEXT GENERATION WITH FATIGUE ===
+        raw_logits = self.text_out(dream_h)
+
+        # Apply Synaptic Fatigue: Subtract fatigue from logits (Soft Inhibition)
+        # This makes it harder (but not impossible) to repeat words
+        text_logits = raw_logits - (self.synaptic_fatigue * 5.0)
+
+        # Natural decay of fatigue (Refractory period ending)
+        self.synaptic_fatigue *= 0.98
+
         text_gate_raw = torch.sigmoid(self.text_gate(h))
 
         # Combine speak impulse with stress penalty
@@ -1319,6 +1336,9 @@ class VitalisWorker(QThread):
         self.oxytocin = 0.0  # Range 0.0 to 1.0 (The "Love/Safety" Hormone)
         self.soothe_trigger = False
 
+        # === LEARNING CONTROL ===
+        self.learning_paused = False
+
         # === SCAFFOLD SYSTEMS ===
         print("[INIT] Loading scaffold systems...")
         self.scaffold_llm = ScaffoldLLM()
@@ -1452,13 +1472,14 @@ class VitalisWorker(QThread):
                     except:
                         pass
 
-                # Pacman
+                # Pacman (Check if paused)
                 try:
-                    pac_word = self.pacman.queue.get_nowait()
-                    text_input = text_input + " " + pac_word if text_input else pac_word
-                    pac_msg = f"[LEARN] {pac_word}"
-                    if input_source != "EXTERNAL":
-                        input_source = "EXTERNAL"
+                    if not self.learning_paused:
+                        pac_word = self.pacman.queue.get_nowait()
+                        text_input = text_input + " " + pac_word if text_input else pac_word
+                        pac_msg = f"[LEARN] {pac_word}"
+                        if input_source != "EXTERNAL":
+                            input_source = "EXTERNAL"
                 except queue.Empty:
                     pass
 
@@ -1512,30 +1533,6 @@ class VitalisWorker(QThread):
                 self.tts_gate = outputs['tts_gate'].item()
                 self.last_cry_suppression = outputs['cry_suppression'].item()
                 self.energy.conservation_gain = outputs['energy_conservation'].item()
-
-                # === TRAINING ===
-                if text_indices and len(text_indices) > 1:
-                    target = torch.tensor(
-                        [text_indices[1:] + [text_indices[-1]]],
-                        dtype=torch.long
-                    ).to(self.brain.device)
-
-                    logits = outputs['text_logits']
-                    if logits.dim() == 2:
-                        logits = logits.unsqueeze(1).expand(-1, target.size(1), -1)
-
-                    loss = F.cross_entropy(
-                        logits.view(-1, self.brain.vocab_size),
-                        target.view(-1),
-                        ignore_index=-1
-                    ) * outputs['input_weight'].item()
-
-                    self.optimizer.zero_grad()
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
-                    self.optimizer.step()
-
-                    self.last_loss = loss.item()
 
                 # === HORMONE REGULATION & STRESS UPDATE ===
 
@@ -1621,6 +1618,48 @@ class VitalisWorker(QThread):
                         self.is_speaking = True
                         self.energy.spend_speaking(len(ai_msg.split()))
                         print(f"[SPONTANEOUS] AI says: {ai_msg}")
+
+                # === APPLY FATIGUE FOR SPOKEN WORDS ===
+                if self.is_speaking and ai_msg:
+                    indices = self.vocab.learn_text(ai_msg)
+                    if indices:
+                        # Convert to tensor for indexing
+                        idx_tensor = torch.tensor(indices, device=self.brain.device)
+                        # Spike fatigue for used words (Refractory period)
+                        self.brain.synaptic_fatigue.index_add_(
+                            0, idx_tensor,
+                            torch.ones(len(indices), device=self.brain.device) * 2.0
+                        )
+
+                # === TRAINING (With Metabolic Pain) ===
+                if text_indices and len(text_indices) > 1:
+                    target = torch.tensor(
+                        [text_indices[1:] + [text_indices[-1]]],
+                        dtype=torch.long
+                    ).to(self.brain.device)
+
+                    logits = outputs['text_logits']
+                    if logits.dim() == 2:
+                        logits = logits.unsqueeze(1).expand(-1, target.size(1), -1)
+
+                    # Standard task loss
+                    task_loss = F.cross_entropy(
+                        logits.view(-1, self.brain.vocab_size),
+                        target.view(-1),
+                        ignore_index=-1
+                    ) * outputs['input_weight'].item()
+
+                    # Metabolic Pain (Energy Penalty)
+                    # If action was expensive, increase loss slightly
+                    energy_cost = max(0, 0.8 - self.energy.energy)
+                    total_loss = task_loss + (energy_cost * 2.0)
+
+                    self.optimizer.zero_grad()
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.brain.parameters(), 1.0)
+                    self.optimizer.step()
+
+                    self.last_loss = task_loss.item()
 
                 # Spend small energy just for thinking
                 self.energy.spend_thinking()
@@ -1767,7 +1806,7 @@ class VitalisWorker(QThread):
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QLineEdit, QProgressBar, QFrame, QSplitter, QGridLayout,
-    QPushButton
+    QPushButton, QCheckBox
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
@@ -2153,6 +2192,15 @@ class MainWindow(QMainWindow):
         """)
         self.input_field.setPlaceholderText("TRANSMIT TO AI...")
 
+        # === ADD PAUSE SWITCH ===
+        self.pause_learning_cb = QCheckBox("PAUSE BACKGROUND LEARNING")
+        self.pause_learning_cb.setStyleSheet("""
+            QCheckBox { color: #888; font-size: 9pt; }
+            QCheckBox::indicator { border: 1px solid #555; width: 12px; height: 12px; }
+            QCheckBox::indicator:checked { background: #00FF88; }
+        """)
+        self.pause_learning_cb.toggled.connect(self._toggle_learning)
+
         # === ADD SOOTHE BUTTON ===
         self.soothe_btn = QPushButton("TRANSMIT CALM (432Hz)")
         self.soothe_btn.setCursor(Qt.PointingHandCursor)
@@ -2179,6 +2227,7 @@ class MainWindow(QMainWindow):
         self.soothe_btn.clicked.connect(self._on_soothe_clicked)
 
         chat_panel.content.addWidget(self.chat_txt)
+        chat_panel.content.addWidget(self.pause_learning_cb)
         chat_panel.content.addWidget(self.input_field)
         chat_panel.content.addWidget(self.soothe_btn)
         split.addWidget(chat_panel)
@@ -2199,6 +2248,13 @@ class MainWindow(QMainWindow):
             self.worker.text_queue.put(text)
             self.chat_txt.append(f"<span style='color:#FFFFFF'>YOU: {text}</span>")
             self.input_field.clear()
+
+    def _toggle_learning(self, checked: bool):
+        if hasattr(self, 'worker'):
+            self.worker.learning_paused = checked
+            state = "PAUSED" if checked else "RESUMED"
+            color = "#FF9900" if checked else "#00FF88"
+            self.chat_txt.append(f"<i style='color:{color}'>*** BACKGROUND LEARNING {state} ***</i>")
 
     def _on_soothe_clicked(self):
         """Send calming signal to the brain."""
@@ -2284,7 +2340,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  MAGNUMOPUSVITALIS v2.1 - Genesis Unified")
+    print("  MAGNUMOPUSVITALIS v2.2 - Genesis Unified + Synaptic Fatigue")
     print("  'A seed that grows, not a machine that thinks.'")
     print("=" * 70)
     print()
@@ -2300,6 +2356,7 @@ if __name__ == "__main__":
     print("  • Type in the COMM LINK box and press Enter")
     print("  • Drop .txt files in 'training_data/' folder for learning")
     print("  • Press 'TRANSMIT CALM' to calm the AI if it gets stressed")
+    print("  • Use the 'Pause Learning' switch to focus the conversation")
     print()
     print("🧠 MODES:")
     print("  • COCOON: AI uses GPT-2 scaffold for responses (early stage)")
