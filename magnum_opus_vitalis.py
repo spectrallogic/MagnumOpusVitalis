@@ -2,17 +2,17 @@
 MagnumOpusVitalis: The Living Intelligence
 ================================================================
 ARCHITECT: Alan Hourmand
-VERSION: 2.0 (Genesis Unified)
+VERSION: 2.1 (Genesis Unified + Hormone Update)
 
 PHILOSOPHY:
 "A seed that grows, not a machine that thinks."
 
-INTEGRATIONS FROM ARTIFICIALSENTIENCE:
+INTEGRATIONS:
 - ElasticLowRankLayer (low-rank growth with compression)
 - Exploratory Routing (temperature + epsilon-greedy)
-- TemporalConsciousness (specious present - past/present/future)
-- Consolidation mechanisms (protected bases)
-- GoalSystem integration
+- TemporalConsciousness (specious present)
+- Biological Hormone System (Oxytocin/Stress regulation)
+- Emotional Audio Synthesis (FM Synthesis Droid/Infant)
 
 CORE PRINCIPLES:
 1. TABULA RASA - Starts knowing nothing, learns everything
@@ -47,8 +47,8 @@ from typing import Optional, List, Dict, Tuple
 # 🛡️ CONFIGURATION FLAGS
 # ============================================================================
 
-ENABLE_RAW_AUDIO_OUTPUT = True  # Set True if sounddevice works
-ENABLE_RAW_MICROPHONE = False    # Set True if sounddevice works
+ENABLE_RAW_AUDIO_OUTPUT = True   # ENABLED: Set to True for R2-D2 sounds
+ENABLE_RAW_MICROPHONE = False    # Set True if you have a mic and sounddevice
 ENABLE_TTS = True                # Text-to-speech via pyttsx3
 ENABLE_STT = True                # Speech-to-text via speech_recognition
 
@@ -66,7 +66,8 @@ try:
     SOUNDDEVICE_AVAILABLE = True
 except ImportError:
     SOUNDDEVICE_AVAILABLE = False
-    print("[SYSTEM] sounddevice not available - audio disabled")
+    if ENABLE_RAW_AUDIO_OUTPUT:
+        print("[SYSTEM] sounddevice not available - audio disabled despite config")
 
 # ============================================================================
 # 🥚 SCAFFOLD SYSTEMS (Training Wheels)
@@ -255,84 +256,52 @@ class GrowthStats:
 class ClusterKnowledge:
     """
     Track confidence and performance per cluster (topic area).
-
-    KEY INSIGHT: Each cluster represents a "topic" in latent space.
-    We track how well the AI performs in each topic to decide:
-    - When to use LLM scaffold (low confidence)
-    - When to use own voice (high confidence)
-
-    This enables GRADUAL, PER-TOPIC independence from the LLM.
     """
     cluster_id: int
     recent_losses: deque = field(default_factory=lambda: deque(maxlen=50))
     prediction_attempts: int = 0
-    prediction_successes: int = 0  # When own prediction was "good enough"
-    llm_assists: int = 0  # Times we used LLM for this cluster
-    own_responses: int = 0  # Times we used own voice
+    prediction_successes: int = 0
+    llm_assists: int = 0
+    own_responses: int = 0
     total_samples: int = 0
 
     @property
     def confidence(self) -> float:
-        """
-        0.0 = no confidence (always use LLM)
-        1.0 = fully confident (always use own voice)
-
-        Based on:
-        - Recent prediction loss (lower = more confident)
-        - Sample count (need enough data)
-        - Success rate of own predictions
-        """
         if self.total_samples < 20:
-            return 0.0  # Not enough experience in this topic
-
+            return 0.0
         if len(self.recent_losses) < 10:
-            return 0.1  # Barely any data
-
-        # Average recent loss - lower is better
+            return 0.1
         avg_loss = sum(self.recent_losses) / len(self.recent_losses)
-        loss_confidence = max(0.0, 1.0 - (avg_loss / 4.0))  # Loss of 4+ = 0 confidence
-
-        # Success rate of predictions
+        loss_confidence = max(0.0, 1.0 - (avg_loss / 4.0))
         if self.prediction_attempts > 0:
             success_rate = self.prediction_successes / self.prediction_attempts
         else:
             success_rate = 0.0
-
-        # Blend: 60% loss-based, 40% success-based
         raw_confidence = 0.6 * loss_confidence + 0.4 * success_rate
-
-        # Require minimum samples for high confidence
-        sample_factor = min(1.0, self.total_samples / 100)  # Full confidence needs 100+ samples
-
+        sample_factor = min(1.0, self.total_samples / 100)
         return raw_confidence * sample_factor
 
     @property
     def should_use_llm(self) -> bool:
-        """Quick check: should we use LLM for this cluster?"""
         return self.confidence < 0.4
 
     @property
     def can_try_own_voice(self) -> bool:
-        """Can we attempt our own response (even if we also check LLM)?"""
         return self.confidence > 0.2 and self.total_samples > 30
 
     def record_loss(self, loss: float):
-        """Record a training loss for this cluster."""
         self.recent_losses.append(loss)
         self.total_samples += 1
 
     def record_prediction_result(self, was_good: bool):
-        """Record whether our prediction was acceptable."""
         self.prediction_attempts += 1
         if was_good:
             self.prediction_successes += 1
 
     def record_llm_assist(self):
-        """Record that we used LLM for this cluster."""
         self.llm_assists += 1
 
     def record_own_response(self):
-        """Record that we used our own voice for this cluster."""
         self.own_responses += 1
 
 
@@ -369,32 +338,30 @@ class EnergySystem:
     """Energy economics - speaking costs energy."""
 
     def __init__(self):
-        self.energy = 0.7  # Start at 70%, not full
+        self.energy = 0.8  # Start higher (80%)
         self.conservation_gain = 0.5
-        self.regen_counter = 0  # Slow down regeneration
+        # Removed self.regen_counter - we regen every frame now
 
     def can_speak(self) -> bool:
         return self.energy > 0.15
 
     def spend_speaking(self, num_words: int = 1):
-        # Speaking is EXPENSIVE - base cost + per word
-        base_cost = 0.08
-        word_cost = 0.02 * num_words
+        # Reduced base cost so it can talk more
+        base_cost = 0.04  # Was 0.08
+        word_cost = 0.01 * num_words # Was 0.02
         total_cost = (base_cost + word_cost) * (1.2 - self.conservation_gain * 0.4)
         self.energy = max(0.0, self.energy - total_cost)
         print(f"[ENERGY] Spent {total_cost:.3f} for {num_words} words, remaining: {self.energy:.2f}")
 
     def spend_thinking(self):
         """Small cost just for processing each frame"""
-        self.energy = max(0.0, self.energy - 0.001)
+        self.energy = max(0.0, self.energy - 0.0005) # Halved the thinking cost
 
     def regenerate(self):
-        # Only regenerate every few frames, and slowly
-        self.regen_counter += 1
-        if self.regen_counter >= 5:  # Every 5 frames
-            self.regen_counter = 0
-            regen = 0.003 * (0.5 + self.conservation_gain * 0.5)
-            self.energy = min(1.0, self.energy + regen)
+        # Regenerate EVERY frame
+        # Base regen (0.001) > Thinking Cost (0.0005) = Net Positive Life
+        regen = 0.001 * (0.8 + self.conservation_gain * 0.5)
+        self.energy = min(1.0, self.energy + regen)
 
 
 class SessionLogger:
@@ -424,14 +391,12 @@ class SessionLogger:
 
 
 # ============================================================================
-# 🧬 SECTION 1: NEURAL COMPONENTS (From ArtificialSentience + MagnumOpus)
+# 🧬 SECTION 1: NEURAL COMPONENTS
 # ============================================================================
 
 class ElasticLowRankLayer(nn.Module):
     """
     Low-rank factorization layer that grows organically.
-    From ArtificialSentience: U·V^T factorization with per-cluster residual growth.
-    Compression forces abstraction (good for generalization).
     """
 
     def __init__(self, n_in: int, n_out: int, rank: int = 4, num_clusters: int = 8):
@@ -494,8 +459,7 @@ class ElasticLowRankLayer(nn.Module):
 
 class NearestCentroidRouter(nn.Module):
     """
-    Exploratory routing from ArtificialSentience.
-    Temperature-based + epsilon-greedy prevents cluster collapse.
+    Exploratory routing.
     """
 
     def __init__(self, dim: int, num_clusters: int = 8, momentum: float = 0.02):
@@ -541,8 +505,7 @@ class NearestCentroidRouter(nn.Module):
 
 class TemporalConsciousness(nn.Module):
     """
-    From ArtificialSentience: Maintains awareness across past/present/future simultaneously.
-    Implements the "specious present" - a window of time that's all active at once.
+    Maintains awareness across past/present/future simultaneously.
     """
 
     def __init__(self, model_dim: int, window_size: int = 7):
@@ -639,7 +602,6 @@ class TemporalConsciousness(nn.Module):
 class TemporalResonance(nn.Module):
     """
     Simple temporal context via exponential moving average.
-    Complements TemporalConsciousness with short-term resonance.
     """
 
     def __init__(self, dim: int):
@@ -667,7 +629,6 @@ class TemporalResonance(nn.Module):
 class MultiSpeedProcessor(nn.Module):
     """
     Multi-scale abstraction: Fast pattern recognition, slow understanding.
-    Like a baby: sees "blue sky" instantly, understands atmosphere over years.
     """
 
     def __init__(self, dim: int):
@@ -700,7 +661,7 @@ class MultiSpeedProcessor(nn.Module):
 
 
 # ============================================================================
-# 🧠 SECTION 2: SUBCONSCIOUS SYSTEM (4 Layers)
+# 🧠 SECTION 2: SUBCONSCIOUS SYSTEM
 # ============================================================================
 
 class SeaOfNoise(nn.Module):
@@ -1003,8 +964,8 @@ class OmniBrain(nn.Module):
         # === STATE ===
         self.pfc_state: Optional[torch.Tensor] = None
         self.growth_pressure = 0.0
-        self.growth_threshold = 4.5
-        self.growth_patience = 200
+        self.growth_threshold = 3.5
+        self.growth_patience = 250
         self.steps_above_threshold = 0
         self.current_cluster = 0
 
@@ -1188,14 +1149,14 @@ class OmniBrain(nn.Module):
 
 
 # ============================================================================
-# 🔊 SECTION 7: AUDIO ENGINE (SYRINX)
+# 🔊 SECTION 7: AUDIO ENGINE (SYRINX) - UPDATED FOR DROID + INFANT SOUNDS
 # ============================================================================
 
 class EmotionalSyrinx:
     """
     Voice synthesizer with biological & mechanical layers:
     1. Drone - Base metabolic hum (Thinking)
-    2. Cry - Distress signal (Baby-like harmonics)
+    2. Cry - Distress signal (Biological Infant)
     3. Droid - FM Synthesis tones (R2-D2 style language)
     4. Growth - One-shot expansion sound
     """
@@ -1230,7 +1191,7 @@ class EmotionalSyrinx:
 
         # === Layer 2: Biological Cry (Infant-like) ===
         # Triggered by Stress. Suppressed by Learning.
-        # Math: Higher pitch (450Hz) + Second Harmonic (nasal quality) + Faster vibrato
+        # Math: Higher pitch (450Hz base) + Second Harmonic (nasal quality) + Faster vibrato
         cry_amount = max(0, stress - 0.4) * (1.0 - cry_suppression)
 
         if cry_amount > 0.05:
@@ -1247,13 +1208,12 @@ class EmotionalSyrinx:
             output += cry_wave * cry_amount * 0.15
             self.cry_phase += vibrato_speed
 
-        # === Layer 3: Droid Syntax (The "Voice") ===
+        # === Layer 3: Droid Syntax (FM Synthesis / R2-D2 Style) ===
         # Triggered by Speak Impulse. Modulated by Chaos.
-        # This gives the AI "access" to tones.
         # Low Chaos = Pure Whistles (Curious/Happy)
         # High Chaos = Jittery Bleeps (Excited/Urgent)
 
-        if speak_impulse > 0.1:  # Lower threshold so it can "whisper"
+        if speak_impulse > 0.1: # Lower threshold so it can "whisper"
 
             # Carrier Freq: The main pitch of the whistle
             # Glides based on chaos (creates the "sliding" whistle sound)
@@ -1267,6 +1227,7 @@ class EmotionalSyrinx:
             mod_index = 2.0 + (chaos * 8.0)
 
             # FM Synthesis: sin(Carrier + Index * sin(Modulator))
+            # Smooth sine wave base creates pleasant "whistles" instead of harsh static
             fm_tone = np.sin(
                 2 * np.pi * carrier_freq * t +
                 mod_index * np.sin(2 * np.pi * mod_freq * t)
@@ -1354,6 +1315,10 @@ class VitalisWorker(QThread):
         self.logger = SessionLogger()
         self.pacman = Pacman()
 
+        # === HORMONE SYSTEM ===
+        self.oxytocin = 0.0  # Range 0.0 to 1.0 (The "Love/Safety" Hormone)
+        self.soothe_trigger = False
+
         # === SCAFFOLD SYSTEMS ===
         print("[INIT] Loading scaffold systems...")
         self.scaffold_llm = ScaffoldLLM()
@@ -1391,6 +1356,10 @@ class VitalisWorker(QThread):
         self.pacman.start()
 
         print("[INIT] Worker initialized successfully")
+
+    def soothe(self):
+        """Injects a massive dose of Oxytocin."""
+        self.soothe_trigger = True
 
     def run(self):
         print("[WORKER] Starting main loop...")
@@ -1568,10 +1537,29 @@ class VitalisWorker(QThread):
 
                     self.last_loss = loss.item()
 
-                # === UPDATE STRESS ===
+                # === HORMONE REGULATION & STRESS UPDATE ===
+
+                # 1. Injection (Soothe Button)
+                if self.soothe_trigger:
+                    self.oxytocin = 1.0  # Full dose
+                    self.energy.energy = min(1.0, self.energy.energy + 0.4) # Energy boost
+                    print("[HORMONE] Oxytocin flooded. Stress inhibited.")
+                    self.soothe_trigger = False
+
+                # 2. Natural Decay (It wears off slowly)
+                self.oxytocin *= 0.995
+
+                # Calculate "Raw" Stress from confusion/noise
                 confusion = min(1.0, self.last_loss / 5.0)
                 sensory_load = min(1.0, self.current_volume * 2.0)
-                self.current_stress = 0.7 * self.current_stress + 0.3 * (confusion * 0.7 + sensory_load * 0.3)
+                raw_stress = (confusion * 0.7 + sensory_load * 0.3)
+
+                # 3. The Oxytocin Shield
+                # If Oxytocin is high, it BLOCKS raw stress from affecting the system
+                effective_stress = raw_stress * (1.0 - self.oxytocin)
+
+                # Smooth the transition
+                self.current_stress = 0.8 * self.current_stress + 0.2 * effective_stress
 
                 # === STORE MEMORY ===
                 if loop_count % 10 == 0:
@@ -1669,7 +1657,8 @@ class VitalisWorker(QThread):
                     'cry_suppression': self.last_cry_suppression,
                     'cluster': outputs['cluster'],
                     'cluster_rank': self.brain.cortex.get_cluster_rank(outputs['cluster']),
-                    'grew': grew
+                    'grew': grew,
+                    'oxytocin': self.oxytocin # Send hormone level to UI
                 }
 
                 self.sig_update.emit(update_data)
@@ -1734,10 +1723,17 @@ class VitalisWorker(QThread):
             if not isinstance(voice, np.ndarray) or len(voice) < 3:
                 voice = np.array([0.0, 0.0, 0.0])
 
+            # Get raw voice chaos from the neural network
+            neural_chaos = float(voice[1])
+
+            # Apply Oxytocin filter:
+            # If Oxytocin is high, it forces Chaos down (calming the voice)
+            final_chaos = neural_chaos * (1.0 - self.oxytocin)
+
             wave = self.syrinx.generate(
                 frames,
                 tension=float(voice[0]),
-                chaos=float(voice[1]),
+                chaos=final_chaos,
                 speak_impulse=float(voice[2]),
                 stress=float(self.current_stress),
                 energy=float(self.energy.energy),
@@ -1770,7 +1766,8 @@ class VitalisWorker(QThread):
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QTextEdit, QLineEdit, QProgressBar, QFrame, QSplitter, QGridLayout
+    QLabel, QTextEdit, QLineEdit, QProgressBar, QFrame, QSplitter, QGridLayout,
+    QPushButton
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
@@ -2156,8 +2153,34 @@ class MainWindow(QMainWindow):
         """)
         self.input_field.setPlaceholderText("TRANSMIT TO AI...")
 
+        # === ADD SOOTHE BUTTON ===
+        self.soothe_btn = QPushButton("TRANSMIT CALM (432Hz)")
+        self.soothe_btn.setCursor(Qt.PointingHandCursor)
+        self.soothe_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(0, 255, 136, 20);
+                border: 1px solid #00FF88;
+                color: #00FF88;
+                border-radius: 4px;
+                padding: 8px;
+                font-weight: bold;
+                margin-top: 5px;
+            }
+            QPushButton:hover {
+                background: rgba(0, 255, 136, 50);
+                border: 1px solid #FFFFFF;
+                color: #FFFFFF;
+            }
+            QPushButton:pressed {
+                background: #00FF88;
+                color: #000000;
+            }
+        """)
+        self.soothe_btn.clicked.connect(self._on_soothe_clicked)
+
         chat_panel.content.addWidget(self.chat_txt)
         chat_panel.content.addWidget(self.input_field)
+        chat_panel.content.addWidget(self.soothe_btn)
         split.addWidget(chat_panel)
 
         r_layout.addWidget(split, 2)
@@ -2176,6 +2199,14 @@ class MainWindow(QMainWindow):
             self.worker.text_queue.put(text)
             self.chat_txt.append(f"<span style='color:#FFFFFF'>YOU: {text}</span>")
             self.input_field.clear()
+
+    def _on_soothe_clicked(self):
+        """Send calming signal to the brain."""
+        if hasattr(self, 'worker'):
+            self.worker.soothe()
+            self.chat_txt.append(
+                "<i style='color:#00FF88'>*** TRANSMITTING CALMING FREQUENCY ***</i>"
+            )
 
     def _on_update(self, data: dict):
         try:
@@ -2198,7 +2229,7 @@ class MainWindow(QMainWindow):
                 f"LAYERS: {data['layers']} | "
                 f"VOCAB: {data['vocab_size']} | "
                 f"LOSS: {data['loss']:.3f} | "
-                f"CLUSTER: {data['cluster']}(r{data['cluster_rank']}) | "
+                f"OXYTOCIN: {data.get('oxytocin', 0.0):.2f} | "
                 f"<span style='color:{mode_color}'>{mode}</span> | "
                 f"<span style='color:{src_color}'>IN:{data['input_source']}</span> | "
                 f"FPS: {data['fps']:.1f}"
@@ -2253,7 +2284,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  MAGNUMOPUSVITALIS v2.0 - Genesis Unified")
+    print("  MAGNUMOPUSVITALIS v2.1 - Genesis Unified")
     print("  'A seed that grows, not a machine that thinks.'")
     print("=" * 70)
     print()
@@ -2268,7 +2299,7 @@ if __name__ == "__main__":
     print("🎯 HOW TO INTERACT:")
     print("  • Type in the COMM LINK box and press Enter")
     print("  • Drop .txt files in 'training_data/' folder for learning")
-    print("  • Watch the orb react to your input!")
+    print("  • Press 'TRANSMIT CALM' to calm the AI if it gets stressed")
     print()
     print("🧠 MODES:")
     print("  • COCOON: AI uses GPT-2 scaffold for responses (early stage)")
