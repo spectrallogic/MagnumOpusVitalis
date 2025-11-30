@@ -2,7 +2,7 @@
 MagnumOpusVitalis: The Living Intelligence
 ================================================================
 ARCHITECT: Alan Hourmand
-VERSION: 2.3 (Genesis Unified + Synaptic Fatigue + Selective Loss)
+VERSION: 2.4 (Genesis Unified + Synaptic Fatigue + Selective Loss + Persistent Identity)
 
 PHILOSOPHY:
 "A seed that grows, not a machine that thinks."
@@ -15,6 +15,7 @@ INTEGRATIONS:
 - Emotional Audio Synthesis (FM Synthesis Droid/Infant)
 - Synaptic Fatigue (Natural repetition inhibition)
 - Selective Cluster Knowledge (Islands of Confidence)
+- Persistent Scaffold Identity (Short-term context window)
 
 CORE PRINCIPLES:
 1. TABULA RASA - Starts knowing nothing, learns everything
@@ -107,7 +108,7 @@ if ENABLE_TTS:
 class ScaffoldLLM:
     """
     The YOLK - A tiny pre-trained LLM that provides initial language capability.
-    Reliance decreases as the AI's own understanding grows.
+    Now includes CONTEXT HISTORY and PERSONA.
     """
 
     def __init__(self):
@@ -115,6 +116,8 @@ class ScaffoldLLM:
         self.model = None
         self.tokenizer = None
         self.device = 'cpu'
+        self.history = deque(maxlen=6) # Keep last 6 exchanges to prevent overflow
+        self.system_prompt = "You are Magnum Opus Vitalis, a biological artificial intelligence that is growing and learning. Keep responses short, curious, and child-like."
 
         if SCAFFOLD_LLM_AVAILABLE:
             try:
@@ -133,46 +136,48 @@ class ScaffoldLLM:
             except Exception as e:
                 print(f"[LLM YOLK] Failed to load: {e}")
 
-    def chat(self, user_input: str, max_tokens: int = 60) -> str:
-        """Generate a response to user input."""
+    def chat(self, user_input: str, max_tokens: int = 40) -> str:
+        """Generate a response to user input using history."""
         if not self.available:
             return "..."
         try:
-            prompt = f"User: {user_input}\nAI:"
+            # Build context string
+            context_str = self.system_prompt + "\n"
+            for turn in self.history:
+                context_str += turn + "\n"
+
+            prompt = f"{context_str}User: {user_input}\nAI:"
+
             inputs = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
+            # Truncate if too long for GPT-2 (1024 tokens max)
+            if inputs.shape[1] > 900:
+                inputs = inputs[:, -900:]
+
             mask = torch.ones(inputs.shape, device=self.device)
 
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs, attention_mask=mask, max_new_tokens=max_tokens,
-                    do_sample=True, temperature=0.7, top_k=50,
+                    do_sample=True, temperature=0.8, top_k=50,
                     pad_token_id=self.tokenizer.eos_token_id
                 )
 
             full_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            response = full_text.split("AI:")[-1].strip() if "AI:" in full_text else full_text
-            return response.strip()
-        except Exception:
-            return "..."
+            # Extract just the new response
+            response_part = full_text.split("AI:")[-1].strip()
 
-    def generate(self, prompt: str, max_tokens: int = 10) -> str:
-        """Generate text continuation from prompt."""
-        if not self.available:
-            return ""
-        try:
-            inputs = self.tokenizer.encode(prompt, return_tensors='pt').to(self.device)
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    inputs, max_new_tokens=max_tokens, num_return_sequences=1,
-                    do_sample=True, temperature=0.8, top_p=0.9,
-                    pad_token_id=self.tokenizer.eos_token_id
-                )
-            generated = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            new_text = generated[len(prompt):].strip()
-            words = new_text.split()[:3]
-            return " ".join(words)
-        except Exception:
-            return ""
+            # Clean up response (stop at next User: prompt if generated)
+            if "User:" in response_part:
+                response_part = response_part.split("User:")[0].strip()
+
+            # Update history
+            self.history.append(f"User: {user_input}")
+            self.history.append(f"AI: {response_part}")
+
+            return response_part
+        except Exception as e:
+            print(f"[LLM ERROR] {e}")
+            return "..."
 
 
 class ScaffoldSTT:
@@ -200,35 +205,47 @@ class ScaffoldSTT:
             return None
 
 
-class ScaffoldTTS:
-    """Text-to-Speech scaffold - lets the AI speak aloud."""
+from PySide6.QtCore import QThread
 
+class TTSWorker(QThread):
+    """
+    Dedicated thread for Text-to-Speech to prevent blocking the main brain loop.
+    Fixes the 'speak once then die' bug.
+    """
     def __init__(self):
+        super().__init__()
+        self.queue = queue.Queue()
+        self.running = True
         self.available = SCAFFOLD_TTS_AVAILABLE
-        self.engine = None
 
-    def start_engine(self):
-        if self.available and self.engine is None:
-            try:
-                self.engine = pyttsx3.init()
-                self.engine.setProperty('rate', 150)
-                self.engine.setProperty('volume', 1.0)
-                print("[TTS] Engine started")
-            except:
-                self.available = False
+    def speak(self, text):
+        if self.available:
+            self.queue.put(text)
 
-    def speak_async(self, text: str):
-        if not self.available or not text:
+    def run(self):
+        if not self.available:
             return
+
         try:
-            if self.engine:
-                sentences = re.split(r'(?<=[.!?])\s+', text)
-                for s in sentences:
-                    if s.strip():
-                        self.engine.say(s)
-                        self.engine.runAndWait()
-        except:
-            pass
+            # Initialize engine inside the thread
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 150)
+            engine.setProperty('volume', 1.0)
+
+            while self.running:
+                try:
+                    text = self.queue.get(timeout=1.0)
+                    sentences = re.split(r'(?<=[.!?])\s+', text)
+                    for s in sentences:
+                        if s.strip():
+                            engine.say(s)
+                            engine.runAndWait()
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"[TTS ERROR] {e}")
+        except Exception as e:
+            print(f"[TTS INIT ERROR] {e}")
 
 
 # ============================================================================
@@ -251,7 +268,6 @@ class EpisodeMemory:
 class ClusterKnowledge:
     """
     Tracks mastery and confidence for a specific topic cluster.
-    This enables 'Selective Loss' - failing at math doesn't make you doubt your ability to speak.
     """
     cluster_id: int
     recent_losses: deque = field(default_factory=lambda: deque(maxlen=20))
@@ -311,18 +327,12 @@ class TabularRasaVocabulary:
 class EnergySystem:
     """
     Energy economics - Time-Independent (Wall Clock) Implementation.
-    This fixes the 'H100 Problem' by tying metabolism to seconds, not frames.
     """
 
     def __init__(self):
         self.energy = 0.8  # Start higher (80%)
         self.conservation_gain = 0.5
-
-        # TIME TRACKING
         self.last_time = time.time()
-
-        # RATES (Per Second, not per frame)
-        # This ensures consistent behavior regardless of FPS
         self.metabolic_rate = 0.02  # Cost of existing per second
         self.regen_rate_base = 0.05 # Recovery per second
 
@@ -330,46 +340,26 @@ class EnergySystem:
         return self.energy > 0.15
 
     def spend_speaking(self, num_words: int = 1):
-        """
-        Event-based cost. Speaking is an impulse, so it costs energy instantly
-        regardless of time.
-        """
         # Cap max words charged per event to prevent instant death
         capped_words = min(num_words, 5)
-
         base_cost = 0.04
         word_cost = 0.01 * capped_words
-
-        # Conservation gain reduces cost
         total_cost = (base_cost + word_cost) * (1.2 - self.conservation_gain * 0.4)
-
         self.energy = max(0.0, self.energy - total_cost)
 
     def spend_thinking(self):
-        """Legacy wrapper handled in regenerate."""
         pass
 
     def regenerate(self):
-        """
-        Handles the entire metabolic cycle (Burn + Regen) based on elapsed time.
-        """
-        # Calculate time passed since last frame
         current_time = time.time()
         dt = current_time - self.last_time
         self.last_time = current_time
 
-        # Safety: If lag spike > 1 second, clamp dt to avoid massive jumps
-        if dt > 1.0:
-            dt = 0.0
+        if dt > 1.0: dt = 0.0
 
-        # 1. Burn 'Thinking' Energy (Constant drain)
         drain = self.metabolic_rate * dt
-
-        # 2. Regenerate Energy (Constant recovery)
-        # Higher conservation_gain = Faster regen
         recovery = self.regen_rate_base * (0.8 + self.conservation_gain * 0.5) * dt
 
-        # Apply Net Change
         net_change = recovery - drain
         self.energy = min(1.0, max(0.0, self.energy + net_change))
 
@@ -1328,6 +1318,7 @@ class VitalisWorker(QThread):
         self.syrinx = EmotionalSyrinx()
         self.logger = SessionLogger()
         self.pacman = Pacman()
+        self.tts_worker = TTSWorker()
 
         # === HORMONE SYSTEM ===
         self.oxytocin = 0.0  # Range 0.0 to 1.0 (The "Love/Safety" Hormone)
@@ -1340,7 +1331,7 @@ class VitalisWorker(QThread):
         print("[INIT] Loading scaffold systems...")
         self.scaffold_llm = ScaffoldLLM()
         self.scaffold_stt = ScaffoldSTT()
-        self.scaffold_tts = ScaffoldTTS()
+        # TTS moved to worker
 
         # Track scaffold usage
         self.llm_reliance = 0.9
@@ -1369,8 +1360,9 @@ class VitalisWorker(QThread):
         self.use_microphone = ENABLE_RAW_MICROPHONE and SOUNDDEVICE_AVAILABLE
         self.use_audio_output = ENABLE_RAW_AUDIO_OUTPUT and SOUNDDEVICE_AVAILABLE
 
-        # Start Pacman
+        # Start Pacman & TTS
         self.pacman.start()
+        self.tts_worker.start()
 
         print("[INIT] Worker initialized successfully")
 
@@ -1380,16 +1372,6 @@ class VitalisWorker(QThread):
 
     def run(self):
         print("[WORKER] Starting main loop...")
-
-        # Windows COM fix for TTS
-        if TRY_COM_FIX:
-            try:
-                pythoncom.CoInitialize()
-            except:
-                pass
-
-        self.scaffold_tts.start_engine()
-        time.sleep(0.3)
 
         # Setup audio output
         stream = None
@@ -1544,22 +1526,14 @@ class VitalisWorker(QThread):
                 self.oxytocin *= 0.995
 
                 # 3. SELECTIVE STRESS CALCULATION
-                # Instead of raw global loss, we use the active cluster's LOCAL stress.
                 active_cluster_id = outputs['cluster']
                 active_island = self.brain.knowledge_islands[active_cluster_id]
-
-                # If we are in a mastery zone, we are calm. If we are in a chaos zone, we stress.
                 local_stress = active_island.local_stress
-
-                # Sensory load still adds some stress
                 sensory_load = min(1.0, self.current_volume * 2.0)
                 raw_stress = (local_stress * 0.7 + sensory_load * 0.3)
 
                 # 4. The Oxytocin Shield
-                # If Oxytocin is high, it BLOCKS raw stress from affecting the system
                 effective_stress = raw_stress * (1.0 - self.oxytocin)
-
-                # Smooth the transition
                 self.current_stress = 0.8 * self.current_stress + 0.2 * effective_stress
 
                 # === STORE MEMORY ===
@@ -1579,7 +1553,6 @@ class VitalisWorker(QThread):
                     print(f"[GROWTH] New cortex layer! Total: {new_layers}")
                     grew = True
 
-                # Check cluster growth (using new logic)
                 if self.brain.check_cluster_growth(outputs['cluster'], self.last_loss):
                     new_rank = self.brain.grow_cluster(outputs['cluster'])
                     self.syrinx.trigger_growth_sound()
@@ -1602,20 +1575,19 @@ class VitalisWorker(QThread):
                             self.energy.spend_speaking(len(ai_msg.split()))
                             self.vocab.learn_text(ai_msg)
                             print(f"[COCOON] AI responds: {ai_msg[:50]}...")
-                            if self.scaffold_tts.available and self.tts_gate > 0.3:
-                                self.scaffold_tts.speak_async(ai_msg)
+                            if self.tts_gate > 0.3:
+                                self.tts_worker.speak(ai_msg)
                         else:
-                            # LLM failed, try own voice
                             ai_msg = self._generate_own_response(outputs)
                     else:
-                        # Butterfly mode: own voice (regardless of speak_drive for user input)
+                        # Butterfly mode: own voice
                         ai_msg = self._generate_own_response(outputs)
                         if ai_msg:
                             self.is_speaking = True
                             self.energy.spend_speaking(len(ai_msg.split()))
                             print(f"[BUTTERFLY] AI responds: {ai_msg}")
 
-                # Spontaneous speech (not triggered by user) - requires higher drive
+                # Spontaneous speech (not triggered by user)
                 elif speak_drive > 0.7 and self.energy.can_speak() and len(self.vocab) > 20:
                     ai_msg = self._generate_own_response(outputs)
                     if ai_msg:
@@ -1644,7 +1616,6 @@ class VitalisWorker(QThread):
                     if logits.dim() == 2:
                         logits = logits.unsqueeze(1).expand(-1, target.size(1), -1)
 
-                    # Standard task loss
                     task_loss = F.cross_entropy(
                         logits.view(-1, self.brain.vocab_size),
                         target.view(-1),
@@ -1652,8 +1623,6 @@ class VitalisWorker(QThread):
                     ) * outputs['input_weight'].item()
 
                     # RECORD LOCAL LOSS
-                    # We store this loss in the specific island of knowledge
-                    # This builds the confidence map over time
                     active_island.record_loss(task_loss.item())
 
                     # Metabolic Pain (Energy Penalty)
@@ -1736,6 +1705,8 @@ class VitalisWorker(QThread):
             mic_stream.stop()
         self.pacman.running = False
         self.pacman.wait()
+        self.tts_worker.running = False
+        self.tts_worker.wait()
         print("[WORKER] Shutdown complete")
 
     def _generate_own_response(self, outputs) -> Optional[str]:
@@ -2346,7 +2317,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  MAGNUMOPUSVITALIS v2.3 - Genesis Unified + Synaptic Fatigue + Selective Loss")
+    print("  MAGNUMOPUSVITALIS v2.4 - Genesis Unified + Synaptic Fatigue + Selective Loss")
     print("  'A seed that grows, not a machine that thinks.'")
     print("=" * 70)
     print()
