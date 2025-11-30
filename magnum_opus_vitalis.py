@@ -2,7 +2,7 @@
 MagnumOpusVitalis: The Living Intelligence
 ================================================================
 ARCHITECT: Alan Hourmand
-VERSION: 2.2 (Genesis Unified + Hormone + Synaptic Fatigue)
+VERSION: 2.3 (Genesis Unified + Synaptic Fatigue + Selective Loss)
 
 PHILOSOPHY:
 "A seed that grows, not a machine that thinks."
@@ -14,6 +14,7 @@ INTEGRATIONS:
 - Biological Hormone System (Oxytocin/Stress regulation)
 - Emotional Audio Synthesis (FM Synthesis Droid/Infant)
 - Synaptic Fatigue (Natural repetition inhibition)
+- Selective Cluster Knowledge (Islands of Confidence)
 
 CORE PRINCIPLES:
 1. TABULA RASA - Starts knowing nothing, learns everything
@@ -22,6 +23,7 @@ CORE PRINCIPLES:
 4. UNIFIED MEMORY - Memory IS the model, not separate
 5. ENERGY ECONOMICS - Speaking costs energy, silence recovers
 6. TEMPORAL CONSCIOUSNESS - Aware of past/present/future simultaneously
+7. SELECTIVE MASTERY - Failure in one domain does not break confidence in another
 
 NO HARDCODED KNOWLEDGE. NO CHEATING.
 """
@@ -246,64 +248,35 @@ class EpisodeMemory:
 
 
 @dataclass
-class GrowthStats:
-    """Track learning stats per cluster for growth decisions."""
-    recent_losses: List[float] = field(default_factory=list)
-    expansions: int = 0
-    samples: int = 0
-
-
-@dataclass
 class ClusterKnowledge:
     """
-    Track confidence and performance per cluster (topic area).
+    Tracks mastery and confidence for a specific topic cluster.
+    This enables 'Selective Loss' - failing at math doesn't make you doubt your ability to speak.
     """
     cluster_id: int
-    recent_losses: deque = field(default_factory=lambda: deque(maxlen=50))
-    prediction_attempts: int = 0
-    prediction_successes: int = 0
-    llm_assists: int = 0
-    own_responses: int = 0
-    total_samples: int = 0
-
-    @property
-    def confidence(self) -> float:
-        if self.total_samples < 20:
-            return 0.0
-        if len(self.recent_losses) < 10:
-            return 0.1
-        avg_loss = sum(self.recent_losses) / len(self.recent_losses)
-        loss_confidence = max(0.0, 1.0 - (avg_loss / 4.0))
-        if self.prediction_attempts > 0:
-            success_rate = self.prediction_successes / self.prediction_attempts
-        else:
-            success_rate = 0.0
-        raw_confidence = 0.6 * loss_confidence + 0.4 * success_rate
-        sample_factor = min(1.0, self.total_samples / 100)
-        return raw_confidence * sample_factor
-
-    @property
-    def should_use_llm(self) -> bool:
-        return self.confidence < 0.4
-
-    @property
-    def can_try_own_voice(self) -> bool:
-        return self.confidence > 0.2 and self.total_samples > 30
+    recent_losses: deque = field(default_factory=lambda: deque(maxlen=20))
+    total_exposure: int = 0
+    mastery_level: float = 0.0 # 0.0 (Novice) -> 1.0 (Expert)
 
     def record_loss(self, loss: float):
         self.recent_losses.append(loss)
-        self.total_samples += 1
+        self.total_exposure += 1
 
-    def record_prediction_result(self, was_good: bool):
-        self.prediction_attempts += 1
-        if was_good:
-            self.prediction_successes += 1
+        # Calculate local mastery based on recent performance
+        avg_loss = sum(self.recent_losses) / len(self.recent_losses)
 
-    def record_llm_assist(self):
-        self.llm_assists += 1
+        # Mastery increases if loss is consistently low
+        current_performance = max(0.0, 1.0 - (avg_loss / 3.0))
+        self.mastery_level = 0.95 * self.mastery_level + 0.05 * current_performance
 
-    def record_own_response(self):
-        self.own_responses += 1
+    @property
+    def local_stress(self) -> float:
+        """How stressful is this specific topic?"""
+        if not self.recent_losses:
+            return 0.1
+        avg_loss = sum(self.recent_losses) / len(self.recent_losses)
+        # Normalize: Loss of 0.5 is calm, Loss of 5.0 is panic
+        return min(1.0, avg_loss / 4.0)
 
 
 class TabularRasaVocabulary:
@@ -335,7 +308,6 @@ class TabularRasaVocabulary:
         return len(self.idx2word)
 
 
-
 class EnergySystem:
     """
     Energy economics - Time-Independent (Wall Clock) Implementation.
@@ -352,7 +324,7 @@ class EnergySystem:
         # RATES (Per Second, not per frame)
         # This ensures consistent behavior regardless of FPS
         self.metabolic_rate = 0.02  # Cost of existing per second
-        self.regen_rate_base = 0.05  # Recovery per second
+        self.regen_rate_base = 0.05 # Recovery per second
 
     def can_speak(self) -> bool:
         return self.energy > 0.15
@@ -372,14 +344,9 @@ class EnergySystem:
         total_cost = (base_cost + word_cost) * (1.2 - self.conservation_gain * 0.4)
 
         self.energy = max(0.0, self.energy - total_cost)
-        # print(f"[ENERGY] Spent {total_cost:.3f}, remaining: {self.energy:.2f}")
 
     def spend_thinking(self):
-        """
-        Legacy wrapper.
-        We now handle the 'thinking cost' inside regenerate() to ensure
-        we only calculate the time delta (dt) once per frame.
-        """
+        """Legacy wrapper handled in regenerate."""
         pass
 
     def regenerate(self):
@@ -1014,11 +981,13 @@ class OmniBrain(nn.Module):
 
         # === SYNAPTIC FATIGUE (For Repetition Inhibition) ===
         # Tracks how "tired" each word neuron is.
-        # Initialize on device (cuda/cpu)
         self.register_buffer('synaptic_fatigue', torch.zeros(vocab_size))
 
-        # Per-cluster stats for growth
-        self.cluster_stats = [GrowthStats() for _ in range(num_clusters)]
+        # === SELECTIVE LOSS KNOWLEDGE (The "Islands of Knowledge") ===
+        # Stores mastery stats for each topic cluster independently
+        self.knowledge_islands = [
+            ClusterKnowledge(cluster_id=i) for i in range(num_clusters)
+        ]
 
         # Age (for exploration annealing)
         self.age = 0
@@ -1063,24 +1032,16 @@ class OmniBrain(nn.Module):
 
     def check_cluster_growth(self, cluster_idx: int, loss: float) -> bool:
         """Check if a specific cluster needs growth."""
-        stats = self.cluster_stats[cluster_idx]
-        stats.recent_losses.append(loss)
-        stats.samples += 1
+        # Uses the knowledge island data
+        island = self.knowledge_islands[cluster_idx]
 
-        if len(stats.recent_losses) > 50:
-            stats.recent_losses.pop(0)
-
-        if len(stats.recent_losses) >= 50:
-            first_half = stats.recent_losses[:25]
-            second_half = stats.recent_losses[25:]
-            improvement = sum(first_half) / 25 - sum(second_half) / 25
-
-            # Plateau detected - need more capacity
-            if improvement < 0.01 and sum(second_half) / 25 > 0.02:
-                if self.cortex.get_cluster_rank(cluster_idx) < 20:
-                    stats.recent_losses.clear()
-                    stats.expansions += 1
-                    return True
+        # Simple heuristic: If recently stuck, grow
+        if len(island.recent_losses) >= 20:
+            avg_loss = sum(island.recent_losses) / 20
+            # If loss is consistently high but mastery is low
+            if avg_loss > 3.0 and island.mastery_level < 0.2:
+                # We are struggling here. Expand capacity.
+                return True
         return False
 
     def forward(self, v: torch.Tensor, a_ext: torch.Tensor, a_self: torch.Tensor,
@@ -1171,13 +1132,8 @@ class OmniBrain(nn.Module):
 
         # === TEXT GENERATION WITH FATIGUE ===
         raw_logits = self.text_out(dream_h)
-
-        # Apply Synaptic Fatigue: Subtract fatigue from logits (Soft Inhibition)
-        # This makes it harder (but not impossible) to repeat words
         text_logits = raw_logits - (self.synaptic_fatigue * 5.0)
-
-        # Natural decay of fatigue (Refractory period ending)
-        self.synaptic_fatigue *= 0.98
+        self.synaptic_fatigue *= 0.98 # Decay fatigue
 
         text_gate_raw = torch.sigmoid(self.text_gate(h))
 
@@ -1587,12 +1543,19 @@ class VitalisWorker(QThread):
                 # 2. Natural Decay (It wears off slowly)
                 self.oxytocin *= 0.995
 
-                # Calculate "Raw" Stress from confusion/noise
-                confusion = min(1.0, self.last_loss / 5.0)
-                sensory_load = min(1.0, self.current_volume * 2.0)
-                raw_stress = (confusion * 0.7 + sensory_load * 0.3)
+                # 3. SELECTIVE STRESS CALCULATION
+                # Instead of raw global loss, we use the active cluster's LOCAL stress.
+                active_cluster_id = outputs['cluster']
+                active_island = self.brain.knowledge_islands[active_cluster_id]
 
-                # 3. The Oxytocin Shield
+                # If we are in a mastery zone, we are calm. If we are in a chaos zone, we stress.
+                local_stress = active_island.local_stress
+
+                # Sensory load still adds some stress
+                sensory_load = min(1.0, self.current_volume * 2.0)
+                raw_stress = (local_stress * 0.7 + sensory_load * 0.3)
+
+                # 4. The Oxytocin Shield
                 # If Oxytocin is high, it BLOCKS raw stress from affecting the system
                 effective_stress = raw_stress * (1.0 - self.oxytocin)
 
@@ -1616,7 +1579,7 @@ class VitalisWorker(QThread):
                     print(f"[GROWTH] New cortex layer! Total: {new_layers}")
                     grew = True
 
-                # Check cluster growth
+                # Check cluster growth (using new logic)
                 if self.brain.check_cluster_growth(outputs['cluster'], self.last_loss):
                     new_rank = self.brain.grow_cluster(outputs['cluster'])
                     self.syrinx.trigger_growth_sound()
@@ -1664,15 +1627,13 @@ class VitalisWorker(QThread):
                 if self.is_speaking and ai_msg:
                     indices = self.vocab.learn_text(ai_msg)
                     if indices:
-                        # Convert to tensor for indexing
                         idx_tensor = torch.tensor(indices, device=self.brain.device)
-                        # Spike fatigue for used words (Refractory period)
                         self.brain.synaptic_fatigue.index_add_(
                             0, idx_tensor,
                             torch.ones(len(indices), device=self.brain.device) * 2.0
                         )
 
-                # === TRAINING (With Metabolic Pain) ===
+                # === TRAINING (With Selective Loss & Metabolic Pain) ===
                 if text_indices and len(text_indices) > 1:
                     target = torch.tensor(
                         [text_indices[1:] + [text_indices[-1]]],
@@ -1690,8 +1651,12 @@ class VitalisWorker(QThread):
                         ignore_index=-1
                     ) * outputs['input_weight'].item()
 
+                    # RECORD LOCAL LOSS
+                    # We store this loss in the specific island of knowledge
+                    # This builds the confidence map over time
+                    active_island.record_loss(task_loss.item())
+
                     # Metabolic Pain (Energy Penalty)
-                    # If action was expensive, increase loss slightly
                     energy_cost = max(0, 0.8 - self.energy.energy)
                     total_loss = task_loss + (energy_cost * 2.0)
 
@@ -2381,7 +2346,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  MAGNUMOPUSVITALIS v2.2 - Genesis Unified + Synaptic Fatigue")
+    print("  MAGNUMOPUSVITALIS v2.3 - Genesis Unified + Synaptic Fatigue + Selective Loss")
     print("  'A seed that grows, not a machine that thinks.'")
     print("=" * 70)
     print()
