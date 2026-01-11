@@ -496,6 +496,27 @@ In the parallel stream approach, emotions are a *continuous background signal* t
   <img src="media/DIAG_8.png" alt="Parallel Emotional Token Stream Diagram" width="500"/>
 </div>
 
+
+---
+
+## What's Missing: Future Directions
+
+I want to be honest about what these ideas don't yet address:
+
+**Embodiment**: Human cognition is shaped by having a body. This framework processes only text. A future system needs vision, audio, and action.
+
+**Social Learning**: Humans learn from other minds through imitation and theory of mind. This is absent here.
+
+**Scale Testing**: Does patient growth work with billions of parameters? Does the subconscious generate meaningful goals at scale? Unknown.
+
+**Grounding**: How does the system learn that words refer to things in the world? This is the symbol grounding problem, and it likely requires embodiment to solve.
+
+---
+
+## Try It
+
+If you want to experience some of these ideas in action, I'm building a platform at [www.humanchatbots.com](https://www.humanchatbots.com) where you can chat with AI that implements parts of this framework. If you are a developer I recommend you build your own implementation rather than paying $45/month for the subscription on the website. 
+
 ---
 
 ## An Invitation
