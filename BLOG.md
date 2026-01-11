@@ -517,6 +517,8 @@ I want to be honest about what these ideas don't yet address:
 
 If you want to experience some of these ideas in action, I'm building a platform at [www.humanchatbots.com](https://www.humanchatbots.com) where you can chat with AI that implements parts of this framework. If you are a developer I recommend you build your own implementation rather than paying $45/month for the subscription on the website. 
 
+**Note: that the website does not have all of the principles yet, I am still adding them!**
+
 ---
 
 ## An Invitation
