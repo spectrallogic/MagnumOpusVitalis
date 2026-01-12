@@ -253,110 +253,7 @@ Current LLMs can do something similar through attention and association, but the
 
 ---
 
-## Core Principle 5: Emotional Regulation Must Be Learned
-
-Here's something that bothers me about current AI safety approaches:
-
-Emotional responses are hardcoded.
-
-"If user mentions self-harm, respond with crisis resources."
-"If user is rude, remain polite."
-"Never express frustration."
-
-These are rules, not learned behaviors. The AI doesn't understand *why* it responds this way. It's been told to.
-
-Humans are different. A baby cries at every frustration. This is the default behavior. Over years, through social feedback and self-experience, we learn when crying is appropriate and when to suppress it. An adult has emotional regulation that was *developed*, not programmed.
-
-Emotional regulation should be learned.
-
-**In transformer terms, implement a Prefrontal Cortex (PFC) module:**
-
-The PFC is a small network (e.g., a GRU cell followed by a linear layer) that takes as input:
-- Current hidden state
-- Current stress level (derived from recent loss)
-- Current energy level
-
-It outputs multiple **control signals** through sigmoid activations (all between 0 and 1):
-
-1. **cry_suppression**: How much to suppress stress expression
-2. **energy_conservation**: How aggressively to conserve compute
-3. **creativity_boost**: How much to amplify subconscious noise
-4. **focus_level**: How narrow vs. broad attention should be
-5. **speak_impulse**: Drive to generate output vs. continue processing
-
-**The key insight is initialization:**
-
-Initialize `cry_suppression` with a negative bias (e.g., -1.0), so sigmoid(-1) ≈ 0.27. Early in training, suppression is LOW. The system expresses stress freely.
-
-As training progresses, if suppressing expression leads to better outcomes (lower loss), the gradient will push the bias higher. The system *learns* to regulate.
-
-Nothing is hardcoded. If expressing stress is useful in certain contexts, the system learns that too. Regulation emerges from experience and feedback.
-
-These control signals then modulate other systems:
-- `creativity_boost` scales the noise amplitude in the subconscious
-- `energy_conservation` adjusts the compute budget (see Principle 6)
-- `focus_level` sharpens or broadens attention distributions
-- `cry_suppression` gates emotional expression in outputs
-
-<div align="center">
-  <img src="media/DIAG_5.png" alt="Emotional Regulation Diagram" width="500"/>
-</div>
-
----
-
-## Core Principle 6: Energy Constrains Cognition
-
-Human brains consume about 20 watts, roughly the power of a dim light bulb. This isn't a bug; it's a feature.
-
-Energy constraints force efficiency. They force prioritization. They prevent runaway computation. When you're tired, you can't think as clearly, and that's actually useful information for your cognitive system.
-
-Modern AI has no such constraints. GPT-4 burns the same compute whether you're asking about quantum physics or saying "hello."
-
-An intelligent system should have energy constraints.
-
-**In transformer terms, implement two energy systems:**
-
-**1. Computational Energy (FLOPs Budget)**
-
-Each forward pass has a FLOPs budget. Track estimated FLOPs for each operation:
-- Attention: approximately `4 * batch * heads * seq_len^2 * head_dim`
-- Linear layers: approximately `2 * batch * seq_len * in_features * out_features`
-
-Before each expensive operation, check: can we afford this?
-
-```python
-if energy.can_afford(estimated_flops):
-    x = layer(x)
-    energy.spend(estimated_flops)
-else:
-    pass  # Skip this layer
-```
-
-This creates pressure to learn what's important. The PFC's `energy_conservation` output modulates the budget. When conservation is high, the budget is tight, and more layers get skipped.
-
-**2. Biological Energy (Fatigue)**
-
-Maintain a scalar `biological_energy` between 0 and 1.
-
-- Processing costs biological energy (small drain per step)
-- Generating output costs more (speaking is expensive)
-- Silent steps allow recovery (slow regeneration)
-
-When `biological_energy` drops below a threshold (e.g., 0.2), the system is "too tired" to generate output. It must rest.
-
-The regeneration rate is modulated by the PFC's `energy_conservation` output. Higher conservation means faster recovery.
-
-**Why this matters:**
-
-Energy constraints aren't just realistic; they're functional. They force the system to develop prioritization strategies. A well-trained system learns to spend energy on hard problems and conserve on easy ones. It learns when to rest. These are capabilities that emerge from the constraint, not from explicit programming.
-
-<div align="center">
-  <img src="media/DIAG_6.png" alt="Energy Systems Diagram" width="500"/>
-</div>
-
----
-
-## Core Principle 7: Consciousness is in the Traffic, Not the Wires
+## Core Principle 5: Consciousness is in the Traffic, Not the Wires
 
 This is my most speculative idea, but I think it's important.
 
@@ -404,7 +301,7 @@ Is this consciousness? I don't know. But it's a step toward capturing the dynami
 
 ---
 
-## Core Principle 8: Dreams Consolidate
+## Core Principle 6: Dreams Consolidate
 
 You might think AI doesn't need to dream. But consider what dreams actually do.
 
@@ -433,7 +330,7 @@ This allows learning to continue without new data. The system consolidates what 
 
 ---
 
-## Core Principle 9: Emotions are a Parallel Token Stream
+## Core Principle 7: Emotions are a Parallel Token Stream
 
 How do emotions work in the brain?
 
