@@ -1,6 +1,7 @@
 # Magnum Opus Vitalis
 7 Principles for human-like AI
 
+
 <div align="center">
   <img src="media/magnumopus.gif" alt="ArtificialSentience - Baby ASI" width="300"/>
 </div>
@@ -15,7 +16,9 @@ I started an old project called Bicameral AGI, but I didn't have the funds or ti
 
 Now my head is clearer. And I've decided to release everything I've learned. Not because I think I've solved AGI, but because I believe these ideas deserve to exist in the world. Maybe someone with more resources, more time, or a fresh perspective will take them further than I ever could.
 
-I wish everyone reading this the best. I hope something here sparks something in you.
+I wish everyone reading this the best. 
+
+<a href="https://www.buymeacoffee.com/alanhourmand" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="32" width="170"></a>
 
 ---
 
