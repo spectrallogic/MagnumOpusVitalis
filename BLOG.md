@@ -1,5 +1,5 @@
 # Magnum Opus Vitalis
-9 Principles for human-like AI
+7 Principles for human-like AI
 
 <div align="center">
   <img src="media/magnumopus.gif" alt="ArtificialSentience - Baby ASI" width="300"/>
