@@ -442,7 +442,7 @@ If you use these ideas in your work, please cite:
 ```bibtex
 @misc{hourmand2026magnumopusvitalis,
   author = {Hourmand, Alan},
-  title = {Magnum Opus Vitalis: 9 Core Principles for Human-Like AI},
+  title = {Magnum Opus Vitalis: 7 Core Principles for Human-Like AI},
   year = {2026},
   howpublished = {\url{https://github.com/spectrallogic/MagnumOpusVitalis}},
   note = {A framework for developmental, self-regulating artificial intelligence}
