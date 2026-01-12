@@ -7,7 +7,7 @@
 
 ## A Personal Note
 
-My name is Alan Hourmand. I'm 35 years old, and I've spent the better part of a decade on the side thinking about how to build truly intelligent machines. Not the kind that predict the next word, but the kind that *develop*, *learn*, and *grow* the way we do.
+My name is Alan Hourmand. I've spent the better part of a decade on the side thinking about how to build truly intelligent machines. Not the kind that predict the next word, but the kind that *develop*, *learn*, and *grow* the way we do.
 
 I was working as a game developer when I had a realization: most of what we call "intelligence" isn't a single thing. It's dozens of smaller systems working together so seamlessly that it *feels* like one unified mind. Your visual cortex, your language centers, your emotional regulation, your memory. They're all playing the same game together, passing information back and forth, creating the illusion of a singular "you."
 
