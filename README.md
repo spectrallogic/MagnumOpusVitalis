@@ -2,7 +2,7 @@
 ## 7 Principles for Human-Like AI (Starting Framework for AGI/ASI)
 
 <div align="center">
-  <img src="media/IMG_PRINCIPLES.png" alt="Seven Principles" width=""/>
+  <img src="media/MagnumOpusVitalisCover.png" alt="Seven Principles" width=""/>
 </div>
 
 ---
