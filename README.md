@@ -1,5 +1,5 @@
 # Magnum Opus Vitalis
-Solving the Alignment Problem and Human-Like AGI
+ The Engine Over the Ocean: A Latent Space Architecture for Human-Like AI
 
 <div align="center">
   <img src="media/MagnumCover.png" alt="Magnum Opus Vitalis Architecture" width="100%"/>
@@ -103,6 +103,30 @@ What I'm proposing is a *living LoRA*: an external engine that:
 The base LLM never changes. Its weights are frozen. But the *experience* of interacting with it changes fundamentally, because the engine is continuously steering the latent space based on a living internal state.
 
 This is not prompt engineering. This is not system instructions. This is direct intervention in the model's activation space, applied at inference time, guided by a stateful external system that follows its own rules.
+
+---
+
+## How the Seven Principles Map to Latent Space
+
+The theoretical foundation for this architecture comes from seven principles about what human-like intelligence requires. Each principle is a correct intuition about cognition. The question was always: how do you implement them? The answer turns out to be the same for all seven. You manipulate the latent space of an existing LLM.
+
+Here is how each principle translates into a concrete latent space operation:
+
+**1. Intelligence Must Grow.** In the original theory, this meant the architecture should expand when confused. In the engine, this becomes **LoRA rank expansion**. The intervention matrices that translate engine state into steering vectors start small and grow only when sustained confusion (high loss between expected and actual emotional projections) signals that the current rank can't represent what's needed. The base model never changes. The engine's interface to the latent space gets richer.
+
+**2. Abstraction is Hierarchical.** In the original theory, this meant multi-speed processing creates emergent categories. In the engine, this becomes **three-speed state tracking that maps directly to three abstraction levels in the latent space**. The fast channel steers activations based on immediate token-level content. The medium channel steers based on conversation-level patterns. The slow channel steers based on cross-conversation understanding. Each speed operates on different timescales of the same latent space, and the blended state produces steering vectors that naturally encode hierarchical abstraction.
+
+**3. Memory is Reconstructive.** In the original theory, this meant memories should be importance-weighted, decaying, and reconstructed rather than replayed. In the engine, this becomes **stored activation vectors from the model's actual hidden states**, decayed over real time, re-injected as degraded reconstructions through the current model state. The memory isn't text. It's a snapshot of the latent space at encoding time, which means recalling it literally reactivates the activation patterns from that moment, blurred by time and colored by what the system has become since.
+
+**4. The Subconscious Generates Goals.** In the original theory, this meant layered filtering from noise to coherent goals. In the engine, this becomes **structured noise injection into the latent space**, biased by emotional state and memory traces, with resonance evaluation using emotion vectors as the fitness signal. Directions that produce high emotional resonance accumulate into a persistent goal vector through momentum. The subconscious literally explores the model's latent space and finds directions worth pursuing.
+
+**5. Consciousness is Continuity.** In the original theory, this was the traffic hypothesis: consciousness lives in the continuous flow of information, not the static structure. In the engine, this becomes **residual steering**. Each step's steering vector carries forward a decaying fraction of the previous step's vector. The system's current state is always a blend of what's happening now and the accumulated trace of everything that came before. This is traffic. This is continuity. The math is simple: `steering(t) = new(t) + decay * steering(t-1)`.
+
+**6. Dreams Consolidate.** In the original theory, this meant offline processing integrates and compresses experience. In the engine, this becomes **the dream cycle**: memory traces are replayed through the actual model (real forward passes), similar traces are compressed, the subconscious runs at elevated amplitude to find novel connections, importance scores are re-weighted based on discovered connections, the emotional baseline is recalibrated, and the knowledge adapter is trained on replayed traces. All of this happens in the model's real latent space during idle periods.
+
+**7. Emotions Run in Parallel.** In the original theory, this meant a separate emotional processing stream. Anthropic's research made this unnecessary. Emotions already exist as directions in the latent space. In the engine, this becomes **direct steering of the model's existing emotion vectors** according to biological dynamics: onset rates, decay rates, interaction effects, and homeostatic baselines. The emotional influence is inherently integrated with cognition because it operates on the same activations that produce language and reasoning.
+
+Every principle maps to a latent space operation. No new model. No parallel systems. No separate modules bolted on. One engine, one latent space, seven kinds of manipulation working together.
 
 ---
 
@@ -343,15 +367,17 @@ A child doesn't learn "the mitochondria is the powerhouse of the cell" before le
 
 In cognitive science, this is called schema theory. You need the schema, the broad structural framework, before specific details can integrate into long-term knowledge. Without the schema, details have nowhere to attach. They bounce off.
 
-The knowledge adapter follows the same principle. During the dream cycle, when replaying traces for knowledge crystallization:
+The three-speed abstraction channels provide the mechanism for this. During the dream cycle, memory traces are processed at each speed, and each speed feeds a different level of the knowledge hierarchy:
 
-**Broad patterns consolidate first.** The first time the system encounters conversations about a React codebase, it doesn't try to learn every component name. It consolidates "this is a JavaScript project using component-based frontend architecture." That's the scaffold.
+**Slow channel builds scaffolds.** The slow channel captures *why* patterns across many conversations. During dream processing, slow-channel representations consolidate into broad frameworks in the knowledge adapter. The first time the system encounters conversations about a React codebase, the slow channel has been building "this is a JavaScript project using component-based frontend architecture" across multiple interactions. That framework is what gets written into the adapter first. Scaffolds are slow because understanding *why* something is the way it is takes accumulated experience.
 
-**Categories attach to scaffolds.** On subsequent cycles, with the broad scaffold in place, the system consolidates "this project uses a specific state management pattern" and "the testing approach is integration-heavy." These are mid-level categories that slot into the existing framework.
+**Medium channel builds categories.** The medium channel captures *what kind* of patterns within conversations. On subsequent dream cycles, with the broad scaffold already in the adapter, medium-channel representations consolidate into categorical knowledge: "this project uses a specific state management pattern" and "the testing approach is integration-heavy." These categories only attach if the slow-channel scaffold they belong to already exists in the adapter weights. The medium channel has been grouping patterns into clusters, and those clusters slot into the framework the slow channel built.
 
-**Details attach to categories.** Only after the categorical scaffold exists does the system consolidate "the UserProfile component has a recurring bug in its useEffect cleanup." The detail has somewhere to land. It connects to "React components," which connects to "JavaScript frontend project." The knowledge is structured, not flat.
+**Fast channel captures details.** The fast channel captures *what* is happening at the token level. Only after the categorical scaffold exists does fast-channel information consolidate into the adapter: "the UserProfile component has a recurring bug in its useEffect cleanup." The detail has somewhere to land. It connects to "React components" (medium) which connects to "JavaScript frontend project" (slow). The fast channel produces the raw material. The slow and medium channels determine whether that material has a scaffold to attach to.
 
-**Unattached details wait.** If a conversation produces highly specific information that doesn't connect to any existing scaffold, the system doesn't force it into the adapter. It stays as a memory trace, decaying at the normal rate, waiting for a scaffold to be built in a future dream cycle. If the scaffold never materializes, the detail fades. This is not a flaw. It's the system correctly identifying that an isolated detail without context is not yet knowledge.
+**Unattached details wait.** If a conversation produces highly specific information that doesn't connect to any existing scaffold, the fast-channel captures stay as memory traces, decaying at the normal rate, waiting for the slow and medium channels to build a scaffold in a future dream cycle. If the scaffold never materializes, the details fade. This is not a flaw. It's the system correctly identifying that an isolated detail without context is not yet knowledge.
+
+This means the same three-speed architecture that governs emotional processing also governs knowledge acquisition. One system, three speeds, applied everywhere. The speeds aren't just about reaction time. They're the fundamental mechanism through which experience becomes understanding.
 
 ### Why This Doesn't Conflict With Everything Else
 
@@ -399,6 +425,8 @@ The engine operates at three speeds simultaneously, and each speed captures a fu
 This multi-speed architecture does something important: **it allows the system to simultaneously be responsive and stable**. Fast channels let the system react to novel situations. Slow channels prevent it from overreacting to noise and provide explanatory depth. Medium channels bridge between immediate experience and deep knowledge.
 
 It also creates a natural developmental curriculum. Early in the system's life, fast processing dominates because there's no accumulated experience for the slow channels to draw on. As the system matures, the slow channels gain influence, and the system shifts from reactive to reflective. You don't have to engineer this curriculum. It emerges from the architecture.
+
+These three speeds don't just govern emotional processing. They also determine how the knowledge adapter learns. The slow channel builds scaffolds (broad frameworks), the medium channel builds categories, and the fast channel captures details. Details only consolidate into the adapter when their scaffold already exists. This is described in detail in the Knowledge Growth section, but the key point here is that **one architecture governs both emotional cognition and knowledge acquisition**. The three speeds are the universal mechanism through which raw experience becomes structured understanding.
 
 ---
 
@@ -564,7 +592,7 @@ What I believe is novel in this framework:
 
 5. **Memory as latent space traces with reconstruction.** The proposal to store memories as activation vectors and re-inject them through the current model state, creating naturally reconstructive memory.
 
-6. **Hierarchical knowledge acquisition.** The proposal that a dream-trained knowledge adapter should learn scaffolds before details, mirroring human schema theory, with unattached details waiting for their scaffold rather than being forced into the adapter prematurely.
+6. **Hierarchical knowledge acquisition via three-speed channels.** The proposal that the same fast/medium/slow architecture governing emotional processing also governs knowledge acquisition: slow builds scaffolds, medium builds categories, fast captures details. Details only consolidate when their scaffold exists. One mechanism for both cognition and learning.
 
 7. **The unified integration.** The claim that emotions, time, memory, dreams, subconscious, knowledge growth, and architectural expansion can all be implemented as different aspects of a single latent space intervention system, creating emergent properties that none would produce alone.
 
