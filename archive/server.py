@@ -37,7 +37,7 @@ heartbeat_running = False
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "dashboard.html")
+    return send_from_directory("..", "dashboard.html")
 
 
 @app.route("/api/status")

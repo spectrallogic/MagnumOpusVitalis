@@ -405,7 +405,7 @@ def chat_with_brain(message, max_tokens=80):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.route("/")
-def index(): return send_from_directory(".", "discover_dashboard.html")
+def index(): return send_from_directory("..", "discover_dashboard.html")
 
 @app.route("/api/state")
 def api_state():
