@@ -327,6 +327,7 @@ class EngineConfig:
     default_max_tokens: int = 150
     default_temperature: float = 0.7
     default_top_p: float = 0.9
+    repetition_penalty: float = 1.2
 
     # Alignment
     alignment_positive_emotions: List[str] = field(

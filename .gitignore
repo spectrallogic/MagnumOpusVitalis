@@ -1,1 +1,7 @@
 /_archive/
+/profiles/
+engine_state.json
+benchmark_results.json
+__pycache__/
+*.pyc
+.idea/

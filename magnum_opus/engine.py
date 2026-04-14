@@ -156,17 +156,33 @@ class MagnumOpusEngine:
         response = engine.converse("Hello!")
         engine.dream()  # Run during idle
         engine.save("state.json")
+
+    Or with a saved profile:
+        from magnum_opus import load_profile
+        profile = load_profile("gpt2")
+        engine = MagnumOpusEngine(model, tokenizer, profile=profile, device=device)
     """
 
     def __init__(
         self,
         model,
         tokenizer,
-        emotion_vectors: Dict[str, torch.Tensor],
+        emotion_vectors: Optional[Dict[str, torch.Tensor]] = None,
         target_layer: Optional[int] = None,
         config: Optional[EngineConfig] = None,
         device: str = "cpu",
+        profile: Optional["ModelProfile"] = None,
     ):
+        # Accept either explicit vectors or a saved profile
+        if profile is not None:
+            from magnum_opus.profile import ModelProfile
+            if not isinstance(profile, ModelProfile):
+                raise TypeError("profile must be a ModelProfile instance")
+            emotion_vectors = profile.vectors
+            target_layer = profile.metadata.target_layer
+        elif emotion_vectors is None:
+            raise ValueError("Must provide either emotion_vectors or profile")
+
         self.model = model
         self.tokenizer = tokenizer
         self.emotion_vectors = emotion_vectors
@@ -460,6 +476,35 @@ class MagnumOpusEngine:
         self._step(stimulus=stimulus)
         text, states = self._generate(prompt, max_tokens=max_tokens)
         self._post_generation(prompt, text, states)
+        return text
+
+    def generate_without_steering(self, prompt: str, max_tokens: Optional[int] = None,
+                                  temperature: Optional[float] = None) -> str:
+        """
+        Generate from the raw model with NO steering, NO state changes.
+        Used for A/B comparison: same model, same prompt, no engine influence.
+        """
+        max_tokens = max_tokens or self.config.default_max_tokens
+        temperature = temperature or self.config.default_temperature
+
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+
+        # Ensure hook is off
+        self.hook.set_steering(None)
+        self.hook.clear()
+
+        with torch.no_grad():
+            output_ids = self.model.generate(
+                inputs["input_ids"],
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                do_sample=True,
+                top_p=self.config.default_top_p,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
+
+        text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        self.hook.clear()
         return text
 
     # ───────────────────────────────────────────────────────────────────

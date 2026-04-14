@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magnum Opus Vitalis — Research Compare</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f8f9fa;
+            color: #1a1a2e;
+            line-height: 1.5;
+        }
+
+        /* Header */
+        .header {
+            background: #fff;
+            border-bottom: 1px solid #dee2e6;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+        .header h1 span { color: #6c757d; font-weight: 400; }
+        .controls { display: flex; gap: 8px; align-items: center; }
+        .controls button {
+            padding: 6px 14px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            background: #fff;
+            color: #495057;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .controls button:hover { background: #e9ecef; border-color: #adb5bd; }
+        .controls button.primary { background: #4361ee; color: #fff; border-color: #4361ee; }
+        .controls button.primary:hover { background: #3a56d4; }
+
+        /* Main layout */
+        .main {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 52px);
+        }
+
+        /* Split panels */
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            flex: 1;
+            overflow: hidden;
+            gap: 1px;
+            background: #dee2e6;
+        }
+
+        .panel {
+            background: #fff;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 10px 16px;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 13px;
+            font-weight: 600;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .panel-header .tag {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 500;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+        .tag-raw { background: #f1f3f5; color: #868e96; }
+        .tag-engine { background: #e7f5ff; color: #1971c2; }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            max-width: 100%;
+        }
+        .message-role {
+            font-size: 11px;
+            font-weight: 600;
+            color: #868e96;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .message-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #212529;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .message-user .message-text { color: #495057; }
+
+        /* Engine state panel */
+        .state-panel {
+            border-top: 1px solid #dee2e6;
+            background: #f8f9fa;
+            padding: 12px 16px;
+        }
+        .state-panel h3 {
+            font-size: 11px;
+            font-weight: 600;
+            color: #868e96;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        .state-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+        }
+        .state-item { font-size: 12px; }
+        .state-label { color: #868e96; margin-bottom: 2px; }
+        .state-value { font-weight: 600; color: #212529; }
+
+        /* Emotion bars */
+        .emotions-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .emotion-bar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            min-width: 120px;
+        }
+        .emotion-name { color: #868e96; width: 60px; text-align: right; }
+        .emotion-track {
+            flex: 1;
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 3px;
+            overflow: hidden;
+            max-width: 80px;
+        }
+        .emotion-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        .emotion-val { color: #495057; width: 35px; font-variant-numeric: tabular-nums; }
+
+        /* Input area */
+        .input-area {
+            border-top: 1px solid #dee2e6;
+            padding: 12px 16px;
+            background: #fff;
+            display: flex;
+            gap: 8px;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .input-area input:focus { border-color: #4361ee; }
+        .input-area button {
+            padding: 10px 24px;
+            background: #4361ee;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .input-area button:hover { background: #3a56d4; }
+        .input-area button:disabled { background: #adb5bd; cursor: not-allowed; }
+
+        /* Loading spinner */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #868e96;
+            font-size: 13px;
+        }
+        .loading.active { display: block; }
+
+        /* Turn counter */
+        .turn-badge {
+            font-size: 11px;
+            color: #868e96;
+            padding: 4px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Magnum Opus Vitalis <span>Research Compare</span></h1>
+        <div class="controls">
+            <span class="turn-badge">Turn: <span id="turn-count">0</span></span>
+            <button onclick="triggerDream()">Dream Cycle</button>
+            <button onclick="resetAll()">Reset</button>
+            <button onclick="exportData()">Export JSON</button>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="panels">
+            <!-- Raw model panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    Raw Model <span class="tag tag-raw">No steering</span>
+                </div>
+                <div class="messages" id="raw-messages">
+                    <div class="loading" id="raw-loading">Generating...</div>
+                </div>
+            </div>
+
+            <!-- Engine panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    Model + Engine <span class="tag tag-engine">All systems active</span>
+                </div>
+                <div class="messages" id="engine-messages">
+                    <div class="loading" id="engine-loading">Generating...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Engine state -->
+        <div class="state-panel">
+            <h3>Engine State</h3>
+            <div class="state-grid">
+                <div class="state-item">
+                    <div class="state-label">Residual Norm</div>
+                    <div class="state-value" id="residual-norm">0.000</div>
+                </div>
+                <div class="state-item">
+                    <div class="state-label">Memory Traces</div>
+                    <div class="state-value" id="memory-count">0</div>
+                </div>
+                <div class="state-item">
+                    <div class="state-label">Subconscious Goal</div>
+                    <div class="state-value" id="goal-strength">0.000</div>
+                </div>
+            </div>
+            <div class="emotions-grid" id="emotions-grid"></div>
+        </div>
+
+        <!-- Input -->
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Type a message to send to both models..."
+                   onkeydown="if(event.key==='Enter' && !event.shiftKey) sendMessage()">
+            <button id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const EMOTION_COLORS = {
+            calm: '#51cf66', curious: '#339af0', desperate: '#ff6b6b',
+            joy: '#fcc419', anger: '#e03131', fear: '#845ef7',
+            surprise: '#ff922b', trust: '#20c997', sadness: '#5c7cfa',
+            disgust: '#a9e34b',
+        };
+
+        function addMessage(panelId, role, text) {
+            const container = document.getElementById(panelId);
+            const loading = container.querySelector('.loading');
+            const div = document.createElement('div');
+            div.className = `message message-${role}`;
+            div.innerHTML = `
+                <div class="message-role">${role}</div>
+                <div class="message-text">${escapeHtml(text)}</div>
+            `;
+            container.insertBefore(div, loading);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        function updateEngineState(state) {
+            document.getElementById('residual-norm').textContent = state.residual_norm.toFixed(3);
+            document.getElementById('memory-count').textContent = state.memory_count;
+            document.getElementById('goal-strength').textContent = state.subconscious_goal.toFixed(3);
+            document.getElementById('turn-count').textContent = state.step;
+
+            // Update emotion bars
+            const grid = document.getElementById('emotions-grid');
+            grid.innerHTML = '';
+            const emotions = state.emotions || {};
+            for (const [name, val] of Object.entries(emotions)) {
+                if (name.startsWith('temporal_')) continue;
+                const absVal = Math.min(Math.abs(val), 1.0);
+                const color = EMOTION_COLORS[name] || '#868e96';
+                const bar = document.createElement('div');
+                bar.className = 'emotion-bar';
+                bar.innerHTML = `
+                    <span class="emotion-name">${name}</span>
+                    <div class="emotion-track">
+                        <div class="emotion-fill" style="width:${absVal * 100}%;background:${color}"></div>
+                    </div>
+                    <span class="emotion-val">${val.toFixed(2)}</span>
+                `;
+                grid.appendChild(bar);
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('user-input');
+            const btn = document.getElementById('send-btn');
+            const msg = input.value.trim();
+            if (!msg) return;
+
+            input.value = '';
+            btn.disabled = true;
+
+            // Show user message on both sides
+            addMessage('raw-messages', 'user', msg);
+            addMessage('engine-messages', 'user', msg);
+
+            // Show loading
+            document.getElementById('raw-loading').classList.add('active');
+            document.getElementById('engine-loading').classList.add('active');
+
+            try {
+                const resp = await fetch('/api/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg }),
+                });
+                const data = await resp.json();
+
+                addMessage('raw-messages', 'assistant', data.raw_response);
+                addMessage('engine-messages', 'assistant', data.engine_response);
+                updateEngineState(data.engine_state);
+            } catch (err) {
+                addMessage('raw-messages', 'assistant', '[Error: ' + err.message + ']');
+                addMessage('engine-messages', 'assistant', '[Error: ' + err.message + ']');
+            }
+
+            document.getElementById('raw-loading').classList.remove('active');
+            document.getElementById('engine-loading').classList.remove('active');
+            btn.disabled = false;
+            input.focus();
+        }
+
+        async function triggerDream() {
+            try {
+                const resp = await fetch('/api/dream', { method: 'POST' });
+                const data = await resp.json();
+                // Refresh state
+                const status = await fetch('/api/status').then(r => r.json());
+                updateEngineState(status);
+            } catch (err) {
+                console.error('Dream cycle failed:', err);
+            }
+        }
+
+        async function resetAll() {
+            if (!confirm('Reset engine and clear all conversation history?')) return;
+            try {
+                await fetch('/api/reset', { method: 'POST' });
+                document.getElementById('raw-messages').innerHTML =
+                    '<div class="loading" id="raw-loading">Generating...</div>';
+                document.getElementById('engine-messages').innerHTML =
+                    '<div class="loading" id="engine-loading">Generating...</div>';
+                updateEngineState({
+                    residual_norm: 0, memory_count: 0, subconscious_goal: 0,
+                    step: 0, emotions: {},
+                });
+            } catch (err) {
+                console.error('Reset failed:', err);
+            }
+        }
+
+        async function exportData() {
+            try {
+                const resp = await fetch('/api/export');
+                const data = await resp.json();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `mov_compare_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                console.error('Export failed:', err);
+            }
+        }
+
+        // Load initial state
+        fetch('/api/status').then(r => r.json()).then(updateEngineState).catch(() => {});
+    </script>
+</body>
+</html>
