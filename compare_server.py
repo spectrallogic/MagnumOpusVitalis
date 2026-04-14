@@ -10,7 +10,7 @@ Usage:
 """
 
 import argparse
-import json
+import threading
 import time
 
 import torch
@@ -53,7 +53,6 @@ def compare():
         return "\n".join(lines)
 
     raw_prompt = build_prompt(raw_history, user_input)
-    engine_prompt = build_prompt(engine_history, user_input)
 
     # Raw generation (no steering, no state changes)
     torch.manual_seed(int(time.time()) % 10000)
@@ -71,44 +70,34 @@ def compare():
     raw_history.append({"user": user_input, "assistant": raw_response})
     engine_history.append({"user": user_input, "assistant": engine_response})
 
-    # Get engine state for display
-    status = engine.status()
-
+    # Return full engine state
     return jsonify({
         "raw_response": raw_response,
         "engine_response": engine_response,
-        "engine_state": {
-            "emotions": status["emotional_state"]["blended"],
-            "residual_norm": status["residual_norm"],
-            "memory_count": status["memory"]["count"],
-            "subconscious_goal": status["subconscious"]["goal_strength"],
-            "step": status["step"],
-            "dream_cycles": status["dream_cycles"],
-        },
+        "engine_state": engine.status(),
         "turn": len(engine_history),
     })
 
 
 @app.route("/api/status")
 def status():
-    """Get current engine state."""
+    """Get full engine state for live dashboard updates."""
     s = engine.status()
-    return jsonify({
-        "emotions": s["emotional_state"]["blended"],
-        "residual_norm": s["residual_norm"],
-        "memory_count": s["memory"]["count"],
-        "subconscious_goal": s["subconscious"]["goal_strength"],
-        "step": s["step"],
-        "dream_cycles": s["dream_cycles"],
-        "alignment": s["alignment"],
-        "turn": len(engine_history),
-    })
+    s["turn"] = len(engine_history)
+    return jsonify(s)
+
+
+@app.route("/api/autonomous")
+def get_autonomous():
+    """Drain queued autonomous messages for the UI."""
+    msgs = engine.get_autonomous_messages()
+    return jsonify({"messages": msgs})
 
 
 @app.route("/api/dream", methods=["POST"])
 def dream():
     """Trigger a dream cycle."""
-    result = engine.dream(verbose=False)
+    engine.dream(verbose=False)
     return jsonify({"status": "complete", "cycle": engine.status()["dream_cycles"]})
 
 
@@ -131,6 +120,21 @@ def export():
         "engine_status": engine.status(),
         "timestamp": time.time(),
     })
+
+
+def heartbeat_loop():
+    """Background heartbeat: ticks the engine and checks for autonomous speech.
+    Runs every 2 seconds. Skips if the engine is busy with a user request."""
+    while True:
+        time.sleep(2.0)
+        if engine is None:
+            continue
+        try:
+            engine.tick()
+            if engine.check_autonomous_urge():
+                engine.speak_autonomously()
+        except Exception as e:
+            print(f"  [Heartbeat] {e}")
 
 
 def main():
@@ -166,6 +170,11 @@ def main():
         target_layer = n_layers // 2
         vectors = extract_vectors(model, tokenizer, target_layer=target_layer, device=device)
         engine = MagnumOpusEngine(model, tokenizer, vectors, target_layer=target_layer, device=device)
+
+    # Start heartbeat thread
+    heartbeat = threading.Thread(target=heartbeat_loop, daemon=True)
+    heartbeat.start()
+    print("  Heartbeat active (2s interval)")
 
     print(f"\n  Server starting at http://{args.host}:{args.port}")
     print(f"  Model: {args.model} | Device: {device}")

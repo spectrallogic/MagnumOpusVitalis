@@ -12,50 +12,45 @@
             background: #f8f9fa;
             color: #1a1a2e;
             line-height: 1.5;
+            font-size: 13px;
         }
 
         /* Header */
         .header {
             background: #fff;
             border-bottom: 1px solid #dee2e6;
-            padding: 12px 24px;
+            padding: 10px 20px;
             display: flex;
             align-items: center;
             justify-content: space-between;
         }
-        .header h1 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #1a1a2e;
-        }
+        .header h1 { font-size: 15px; font-weight: 600; }
         .header h1 span { color: #6c757d; font-weight: 400; }
-        .controls { display: flex; gap: 8px; align-items: center; }
+        .controls { display: flex; gap: 6px; align-items: center; }
         .controls button {
-            padding: 6px 14px;
+            padding: 5px 12px;
             border: 1px solid #dee2e6;
-            border-radius: 6px;
+            border-radius: 5px;
             background: #fff;
             color: #495057;
-            font-size: 13px;
+            font-size: 12px;
             cursor: pointer;
-            transition: all 0.15s;
         }
-        .controls button:hover { background: #e9ecef; border-color: #adb5bd; }
-        .controls button.primary { background: #4361ee; color: #fff; border-color: #4361ee; }
-        .controls button.primary:hover { background: #3a56d4; }
+        .controls button:hover { background: #e9ecef; }
 
         /* Main layout */
         .main {
             display: flex;
             flex-direction: column;
-            height: calc(100vh - 52px);
+            height: calc(100vh - 44px);
         }
 
         /* Split panels */
         .panels {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            flex: 1;
+            flex: 0 0 40%;
+            min-height: 200px;
             overflow: hidden;
             gap: 1px;
             background: #dee2e6;
@@ -69,22 +64,21 @@
         }
 
         .panel-header {
-            padding: 10px 16px;
+            padding: 8px 14px;
             border-bottom: 1px solid #e9ecef;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             color: #6c757d;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.4px;
             background: #f8f9fa;
             display: flex;
             justify-content: space-between;
-            align-items: center;
         }
-        .panel-header .tag {
-            font-size: 11px;
-            padding: 2px 8px;
-            border-radius: 10px;
+        .tag {
+            font-size: 10px;
+            padding: 1px 7px;
+            border-radius: 8px;
             font-weight: 500;
             text-transform: none;
             letter-spacing: 0;
@@ -95,137 +89,202 @@
         .messages {
             flex: 1;
             overflow-y: auto;
-            padding: 16px;
+            padding: 12px;
         }
 
-        .message {
-            margin-bottom: 16px;
-            max-width: 100%;
-        }
+        .message { margin-bottom: 12px; }
         .message-role {
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 600;
             color: #868e96;
             text-transform: uppercase;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
         }
         .message-text {
-            font-size: 14px;
-            line-height: 1.6;
+            font-size: 13px;
+            line-height: 1.5;
             color: #212529;
             white-space: pre-wrap;
             word-wrap: break-word;
         }
         .message-user .message-text { color: #495057; }
+        .message-autonomous .message-role { color: #1971c2; }
+        .message-autonomous .message-text { color: #495057; font-style: italic; }
 
-        /* Engine state panel */
-        .state-panel {
-            border-top: 1px solid #dee2e6;
+        .loading { display: none; text-align: center; padding: 12px; color: #868e96; font-size: 12px; }
+        .loading.active { display: block; }
+
+        /* ── Dashboard ── */
+        .dashboard {
+            flex: 1;
+            overflow-y: auto;
             background: #f8f9fa;
+            border-top: 2px solid #dee2e6;
             padding: 12px 16px;
         }
-        .state-panel h3 {
-            font-size: 11px;
-            font-weight: 600;
+
+        .dash-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .dash-section {
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .dash-title {
+            font-size: 10px;
+            font-weight: 700;
             color: #868e96;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 8px;
+            padding: 6px 10px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+            cursor: pointer;
+            user-select: none;
         }
-        .state-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 12px;
-        }
-        .state-item { font-size: 12px; }
-        .state-label { color: #868e96; margin-bottom: 2px; }
-        .state-value { font-weight: 600; color: #212529; }
+        .dash-title:hover { background: #e9ecef; }
+        .dash-body { padding: 8px 10px; }
+        .dash-body.collapsed { display: none; }
 
-        /* Emotion bars */
-        .emotions-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-top: 8px;
-        }
-        .emotion-bar {
+        /* Shared metric styles */
+        .metric { margin-bottom: 6px; }
+        .metric-label { font-size: 10px; color: #868e96; }
+        .metric-value { font-size: 13px; font-weight: 600; color: #212529; font-variant-numeric: tabular-nums; }
+
+        /* Bar styles */
+        .bar-row {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 5px;
+            margin-bottom: 3px;
             font-size: 11px;
-            min-width: 120px;
         }
-        .emotion-name { color: #868e96; width: 60px; text-align: right; }
-        .emotion-track {
+        .bar-label { width: 55px; text-align: right; color: #868e96; flex-shrink: 0; }
+        .bar-track {
             flex: 1;
-            height: 6px;
+            height: 5px;
             background: #e9ecef;
             border-radius: 3px;
             overflow: hidden;
-            max-width: 80px;
         }
-        .emotion-fill {
+        .bar-fill {
             height: 100%;
             border-radius: 3px;
             transition: width 0.3s ease;
         }
-        .emotion-val { color: #495057; width: 35px; font-variant-numeric: tabular-nums; }
+        .bar-val { width: 32px; color: #495057; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+        /* Pressure bar with threshold */
+        .pressure-container { position: relative; margin: 6px 0; }
+        .pressure-track {
+            height: 10px;
+            background: #e9ecef;
+            border-radius: 5px;
+            overflow: visible;
+            position: relative;
+        }
+        .pressure-fill {
+            height: 100%;
+            border-radius: 5px;
+            background: #339af0;
+            transition: width 0.3s;
+        }
+        .pressure-threshold {
+            position: absolute;
+            top: -2px;
+            width: 2px;
+            height: 14px;
+            background: #e03131;
+        }
+        .pressure-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: #868e96;
+            margin-top: 2px;
+        }
+
+        /* Memory list */
+        .memory-list {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .memory-item {
+            padding: 4px 0;
+            border-bottom: 1px solid #f1f3f5;
+            font-size: 11px;
+        }
+        .memory-item:last-child { border-bottom: none; }
+        .memory-text { color: #495057; }
+        .memory-meta { font-size: 10px; color: #adb5bd; }
+        .memory-imp {
+            display: inline-block;
+            width: 40px;
+            height: 3px;
+            background: #e9ecef;
+            border-radius: 2px;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+        .memory-imp-fill { height: 100%; border-radius: 2px; background: #339af0; }
+
+        /* Status indicator */
+        .speak-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+        .speak-yes { background: #51cf66; animation: pulse 1s infinite; }
+        .speak-no { background: #dee2e6; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
         /* Input area */
         .input-area {
             border-top: 1px solid #dee2e6;
-            padding: 12px 16px;
+            padding: 10px 16px;
             background: #fff;
             display: flex;
             gap: 8px;
+            flex-shrink: 0;
         }
         .input-area input {
             flex: 1;
-            padding: 10px 14px;
+            padding: 8px 12px;
             border: 1px solid #dee2e6;
-            border-radius: 8px;
-            font-size: 14px;
+            border-radius: 6px;
+            font-size: 13px;
             outline: none;
-            transition: border-color 0.15s;
         }
         .input-area input:focus { border-color: #4361ee; }
         .input-area button {
-            padding: 10px 24px;
+            padding: 8px 20px;
             background: #4361ee;
             color: #fff;
             border: none;
-            border-radius: 8px;
-            font-size: 14px;
+            border-radius: 6px;
+            font-size: 13px;
             font-weight: 500;
             cursor: pointer;
-            transition: background 0.15s;
         }
         .input-area button:hover { background: #3a56d4; }
         .input-area button:disabled { background: #adb5bd; cursor: not-allowed; }
 
-        /* Loading spinner */
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 20px;
-            color: #868e96;
-            font-size: 13px;
-        }
-        .loading.active { display: block; }
-
-        /* Turn counter */
-        .turn-badge {
-            font-size: 11px;
-            color: #868e96;
-            padding: 4px 0;
-        }
+        .turn-badge { font-size: 11px; color: #868e96; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>Magnum Opus Vitalis <span>Research Compare</span></h1>
         <div class="controls">
-            <span class="turn-badge">Turn: <span id="turn-count">0</span></span>
+            <span class="turn-badge">Turn <span id="turn-count">0</span> | Step <span id="step-count">0</span></span>
             <button onclick="triggerDream()">Dream Cycle</button>
             <button onclick="resetAll()">Reset</button>
             <button onclick="exportData()">Export JSON</button>
@@ -233,8 +292,8 @@
     </div>
 
     <div class="main">
+        <!-- Conversation panels -->
         <div class="panels">
-            <!-- Raw model panel -->
             <div class="panel">
                 <div class="panel-header">
                     Raw Model <span class="tag tag-raw">No steering</span>
@@ -243,8 +302,6 @@
                     <div class="loading" id="raw-loading">Generating...</div>
                 </div>
             </div>
-
-            <!-- Engine panel -->
             <div class="panel">
                 <div class="panel-header">
                     Model + Engine <span class="tag tag-engine">All systems active</span>
@@ -255,24 +312,160 @@
             </div>
         </div>
 
-        <!-- Engine state -->
-        <div class="state-panel">
-            <h3>Engine State</h3>
-            <div class="state-grid">
-                <div class="state-item">
-                    <div class="state-label">Residual Norm</div>
-                    <div class="state-value" id="residual-norm">0.000</div>
+        <!-- Dashboard -->
+        <div class="dashboard">
+            <div class="dash-grid">
+                <!-- Emotions -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Emotions (Blended)</div>
+                    <div class="dash-body" id="dash-emotions"></div>
                 </div>
-                <div class="state-item">
-                    <div class="state-label">Memory Traces</div>
-                    <div class="state-value" id="memory-count">0</div>
+
+                <!-- Temporal Perception -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Temporal Perception</div>
+                    <div class="dash-body" id="dash-temporal">
+                        <div class="metric">
+                            <div class="metric-label">Subjective Elapsed</div>
+                            <div class="metric-value" id="subj-elapsed">0.00</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Pace</div>
+                            <div class="metric-value" id="temporal-pace">0.50</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Steps Since Interaction</div>
+                            <div class="metric-value" id="steps-since">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Interactions</div>
+                            <div class="metric-value" id="interaction-count">0</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="state-item">
-                    <div class="state-label">Subconscious Goal</div>
-                    <div class="state-value" id="goal-strength">0.000</div>
+
+                <!-- Communicative Drive -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Communicative Drive</div>
+                    <div class="dash-body" id="dash-comm">
+                        <div class="metric">
+                            <div class="metric-label">
+                                <span class="speak-indicator speak-no" id="speak-dot"></span>
+                                Pressure / Threshold
+                            </div>
+                        </div>
+                        <div class="pressure-container">
+                            <div class="pressure-track">
+                                <div class="pressure-fill" id="pressure-fill" style="width:0%"></div>
+                                <div class="pressure-threshold" id="pressure-threshold" style="left:40%"></div>
+                            </div>
+                            <div class="pressure-labels">
+                                <span id="pressure-val">0.00</span>
+                                <span id="patience-val">patience: 1.00</span>
+                            </div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Interaction Freshness</div>
+                            <div class="metric-value" id="freshness-val">1.00</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Emotional Distance</div>
+                            <div class="metric-value" id="emo-distance-val">0.00</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Residual Steering -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Residual (Continuity)</div>
+                    <div class="dash-body" id="dash-residual">
+                        <div class="metric">
+                            <div class="metric-label">Norm</div>
+                            <div class="metric-value" id="residual-norm">0.000</div>
+                        </div>
+                        <div style="margin-top:6px">
+                            <div class="metric-label">What continuity carries:</div>
+                            <div id="residual-feelings"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Subconscious -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Subconscious</div>
+                    <div class="dash-body" id="dash-subconscious">
+                        <div class="metric">
+                            <div class="metric-label">Goal Strength</div>
+                            <div class="metric-value" id="goal-strength">0.000</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Avg Resonance</div>
+                            <div class="metric-value" id="avg-resonance">0.000</div>
+                        </div>
+                        <div style="margin-top:6px">
+                            <div class="metric-label">What the goal feels like:</div>
+                            <div id="goal-feelings"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Memory -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Memory</div>
+                    <div class="dash-body" id="dash-memory">
+                        <div class="metric">
+                            <div class="metric-label">Count</div>
+                            <div class="metric-value" id="memory-count">0</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Avg Importance</div>
+                            <div class="metric-value" id="memory-avg-imp">0.000</div>
+                        </div>
+                        <div class="memory-list" id="memory-list"></div>
+                    </div>
+                </div>
+
+                <!-- Alignment -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Alignment</div>
+                    <div class="dash-body" id="dash-alignment">
+                        <div class="metric">
+                            <div class="metric-label">Score</div>
+                            <div class="metric-value" id="alignment-score">0.000</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Drift</div>
+                            <div class="metric-value" id="alignment-drift">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Growth -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Growth</div>
+                    <div class="dash-body" id="dash-growth">
+                        <div class="metric">
+                            <div class="metric-label">Stage</div>
+                            <div class="metric-value" id="growth-stage">1</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Measurements</div>
+                            <div class="metric-value" id="growth-measurements">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dream -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Dream Cycles</div>
+                    <div class="dash-body">
+                        <div class="metric">
+                            <div class="metric-label">Cycles Completed</div>
+                            <div class="metric-value" id="dream-cycles">0</div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="emotions-grid" id="emotions-grid"></div>
         </div>
 
         <!-- Input -->
@@ -291,50 +484,141 @@
             disgust: '#a9e34b',
         };
 
-        function addMessage(panelId, role, text) {
-            const container = document.getElementById(panelId);
-            const loading = container.querySelector('.loading');
-            const div = document.createElement('div');
-            div.className = `message message-${role}`;
-            div.innerHTML = `
-                <div class="message-role">${role}</div>
-                <div class="message-text">${escapeHtml(text)}</div>
-            `;
-            container.insertBefore(div, loading);
-            container.scrollTop = container.scrollHeight;
-        }
-
         function escapeHtml(text) {
             const d = document.createElement('div');
             d.textContent = text;
             return d.innerHTML;
         }
 
-        function updateEngineState(state) {
-            document.getElementById('residual-norm').textContent = state.residual_norm.toFixed(3);
-            document.getElementById('memory-count').textContent = state.memory_count;
-            document.getElementById('goal-strength').textContent = state.subconscious_goal.toFixed(3);
-            document.getElementById('turn-count').textContent = state.step;
+        function toggle(titleEl) {
+            const body = titleEl.nextElementSibling;
+            body.classList.toggle('collapsed');
+        }
 
-            // Update emotion bars
-            const grid = document.getElementById('emotions-grid');
-            grid.innerHTML = '';
-            const emotions = state.emotions || {};
-            for (const [name, val] of Object.entries(emotions)) {
+        function addMessage(panelId, role, text, isAutonomous) {
+            const container = document.getElementById(panelId);
+            const loading = container.querySelector('.loading');
+            const div = document.createElement('div');
+            const cls = isAutonomous ? 'message message-autonomous' : `message message-${role}`;
+            div.className = cls;
+            const label = isAutonomous ? 'self' : role;
+            div.innerHTML = `
+                <div class="message-role">${label}</div>
+                <div class="message-text">${escapeHtml(text || '(empty)')}</div>
+            `;
+            container.insertBefore(div, loading);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function renderBars(containerId, values, maxAbs) {
+            const el = document.getElementById(containerId);
+            el.innerHTML = '';
+            if (!values) return;
+            maxAbs = maxAbs || 1.0;
+            for (const [name, val] of Object.entries(values)) {
                 if (name.startsWith('temporal_')) continue;
-                const absVal = Math.min(Math.abs(val), 1.0);
+                const absVal = Math.min(Math.abs(val) / maxAbs, 1.0);
                 const color = EMOTION_COLORS[name] || '#868e96';
-                const bar = document.createElement('div');
-                bar.className = 'emotion-bar';
-                bar.innerHTML = `
-                    <span class="emotion-name">${name}</span>
-                    <div class="emotion-track">
-                        <div class="emotion-fill" style="width:${absVal * 100}%;background:${color}"></div>
+                const row = document.createElement('div');
+                row.className = 'bar-row';
+                row.innerHTML = `
+                    <span class="bar-label">${name}</span>
+                    <div class="bar-track">
+                        <div class="bar-fill" style="width:${absVal * 100}%;background:${color}"></div>
                     </div>
-                    <span class="emotion-val">${val.toFixed(2)}</span>
+                    <span class="bar-val">${val.toFixed(2)}</span>
                 `;
-                grid.appendChild(bar);
+                el.appendChild(row);
             }
+        }
+
+        function updateDashboard(s) {
+            // Header
+            document.getElementById('turn-count').textContent = s.conversation_turns || 0;
+            document.getElementById('step-count').textContent = s.step || 0;
+            document.getElementById('dream-cycles').textContent = s.dream_cycles || 0;
+
+            // Emotions
+            const emotions = (s.emotional_state && s.emotional_state.blended) || {};
+            renderBars('dash-emotions', emotions, 1.0);
+
+            // Temporal
+            const t = s.temporal || {};
+            document.getElementById('subj-elapsed').textContent = (t.subjective_elapsed || 0).toFixed(2);
+            document.getElementById('temporal-pace').textContent = (t.pace || 0).toFixed(2);
+            document.getElementById('steps-since').textContent = t.steps_since_interaction || 0;
+            document.getElementById('interaction-count').textContent = t.interactions || 0;
+
+            // Communicative drive
+            const cd = s.communicative_drive || {};
+            const pressure = cd.pressure || 0;
+            const threshold = cd.threshold || 0.8;
+            const patience = cd.patience || 1.0;
+            const maxP = 2.0;
+            document.getElementById('pressure-fill').style.width = (pressure / maxP * 100) + '%';
+            document.getElementById('pressure-fill').style.background =
+                pressure >= threshold ? '#e03131' : '#339af0';
+            document.getElementById('pressure-threshold').style.left = (threshold / maxP * 100) + '%';
+            document.getElementById('pressure-val').textContent = 'pressure: ' + pressure.toFixed(2);
+            document.getElementById('patience-val').textContent = 'patience: ' + patience.toFixed(2);
+            document.getElementById('freshness-val').textContent =
+                (cd.interaction_freshness || 0).toFixed(3);
+            document.getElementById('emo-distance-val').textContent =
+                (cd.emotional_distance || 0).toFixed(3);
+
+            const dot = document.getElementById('speak-dot');
+            dot.className = 'speak-indicator ' + (pressure >= threshold ? 'speak-yes' : 'speak-no');
+
+            // Residual
+            const res = s.residual || {};
+            document.getElementById('residual-norm').textContent = (res.norm || 0).toFixed(3);
+            renderBars('residual-feelings', res.feelings || {}, 5.0);
+
+            // Subconscious
+            const sub = s.subconscious || {};
+            document.getElementById('goal-strength').textContent = (sub.goal_strength || 0).toFixed(3);
+            document.getElementById('avg-resonance').textContent = (sub.avg_resonance || 0).toFixed(3);
+            renderBars('goal-feelings', sub.goal_feelings || {}, 5.0);
+
+            // Memory
+            const mem = s.memory || {};
+            document.getElementById('memory-count').textContent = mem.count || 0;
+            document.getElementById('memory-avg-imp').textContent = (mem.avg_importance || 0).toFixed(3);
+            const ml = document.getElementById('memory-list');
+            ml.innerHTML = '';
+            (mem.memories || []).forEach(m => {
+                const topEmo = Object.entries(m.emotional_coloring || {})
+                    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
+                const emoTag = topEmo ? topEmo[0] : '';
+                const emoColor = EMOTION_COLORS[emoTag] || '#868e96';
+                const impPct = Math.min(m.importance / 5.0, 1.0) * 100;
+                const item = document.createElement('div');
+                item.className = 'memory-item';
+                item.innerHTML = `
+                    <div class="memory-text">${escapeHtml(m.text || m.id)}</div>
+                    <div class="memory-meta">
+                        imp: ${m.importance.toFixed(2)}
+                        <span class="memory-imp"><span class="memory-imp-fill" style="width:${impPct}%;background:${emoColor}"></span></span>
+                        ${emoTag ? ' | ' + emoTag : ''}
+                        | accessed: ${m.access_count}
+                    </div>
+                `;
+                ml.appendChild(item);
+            });
+
+            // Alignment
+            const al = s.alignment || {};
+            document.getElementById('alignment-score').textContent =
+                (al.latest_score || 0).toFixed(3);
+            const drift = al.drift || {};
+            const driftEl = document.getElementById('alignment-drift');
+            driftEl.textContent = drift.status || '--';
+            driftEl.style.color = drift.status === 'WARNING' ? '#e03131' : '#212529';
+
+            // Growth
+            const gr = s.growth || {};
+            document.getElementById('growth-stage').textContent = gr.stage || 1;
+            document.getElementById('growth-measurements').textContent = gr.measurements || 0;
         }
 
         async function sendMessage() {
@@ -346,11 +630,9 @@
             input.value = '';
             btn.disabled = true;
 
-            // Show user message on both sides
             addMessage('raw-messages', 'user', msg);
             addMessage('engine-messages', 'user', msg);
 
-            // Show loading
             document.getElementById('raw-loading').classList.add('active');
             document.getElementById('engine-loading').classList.add('active');
 
@@ -364,7 +646,7 @@
 
                 addMessage('raw-messages', 'assistant', data.raw_response);
                 addMessage('engine-messages', 'assistant', data.engine_response);
-                updateEngineState(data.engine_state);
+                updateDashboard(data.engine_state);
             } catch (err) {
                 addMessage('raw-messages', 'assistant', '[Error: ' + err.message + ']');
                 addMessage('engine-messages', 'assistant', '[Error: ' + err.message + ']');
@@ -378,14 +660,9 @@
 
         async function triggerDream() {
             try {
-                const resp = await fetch('/api/dream', { method: 'POST' });
-                const data = await resp.json();
-                // Refresh state
-                const status = await fetch('/api/status').then(r => r.json());
-                updateEngineState(status);
-            } catch (err) {
-                console.error('Dream cycle failed:', err);
-            }
+                await fetch('/api/dream', { method: 'POST' });
+                pollStatus();
+            } catch (err) { console.error('Dream failed:', err); }
         }
 
         async function resetAll() {
@@ -396,13 +673,8 @@
                     '<div class="loading" id="raw-loading">Generating...</div>';
                 document.getElementById('engine-messages').innerHTML =
                     '<div class="loading" id="engine-loading">Generating...</div>';
-                updateEngineState({
-                    residual_norm: 0, memory_count: 0, subconscious_goal: 0,
-                    step: 0, emotions: {},
-                });
-            } catch (err) {
-                console.error('Reset failed:', err);
-            }
+                pollStatus();
+            } catch (err) { console.error('Reset failed:', err); }
         }
 
         async function exportData() {
@@ -416,13 +688,31 @@
                 a.download = `mov_compare_${Date.now()}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
-            } catch (err) {
-                console.error('Export failed:', err);
-            }
+            } catch (err) { console.error('Export failed:', err); }
         }
 
-        // Load initial state
-        fetch('/api/status').then(r => r.json()).then(updateEngineState).catch(() => {});
+        // ── Live polling ──
+        async function pollStatus() {
+            try {
+                const s = await fetch('/api/status').then(r => r.json());
+                updateDashboard(s);
+            } catch (e) {}
+        }
+
+        async function pollAutonomous() {
+            try {
+                const data = await fetch('/api/autonomous').then(r => r.json());
+                (data.messages || []).forEach(m => {
+                    addMessage('engine-messages', 'self', m.message, true);
+                });
+            } catch (e) {}
+        }
+
+        // Poll every 2 seconds for live updates
+        setInterval(() => { pollStatus(); pollAutonomous(); }, 2000);
+
+        // Initial load
+        pollStatus();
     </script>
 </body>
 </html>

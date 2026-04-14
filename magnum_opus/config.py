@@ -320,8 +320,13 @@ class EngineConfig:
     growth_patience: int = 20
     growth_confusion_threshold: float = 0.3
 
-    # Temporal
-    temporal_recency_halflife: float = 30.0  # seconds
+    # Internal time perception (weights for subjective time, sum to 1.0)
+    internal_time_residual_weight: float = 0.3
+    internal_time_emotional_weight: float = 0.25
+    internal_time_freshness_weight: float = 0.2
+    internal_time_step_weight: float = 0.15
+    internal_time_memory_weight: float = 0.1
+    internal_time_step_scale: float = 20.0  # steps for ~1.0 subjective time
 
     # Generation
     default_max_tokens: int = 150

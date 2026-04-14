@@ -13,6 +13,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from dataclasses import dataclass, field
+
 from magnum_opus.config import (
     EMOTION_CONFIGS, EMOTION_INTERACTIONS, EmotionConfig,
     FAST_ONSET_MULT, FAST_DECAY_MULT, FAST_WEIGHT,
@@ -20,6 +22,25 @@ from magnum_opus.config import (
     SLOW_ONSET_MULT, SLOW_DECAY_MULT, SLOW_WEIGHT,
     EngineConfig,
 )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# INTERNAL TIME SIGNALS
+# Snapshot of internal state that encodes subjective time perception
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class InternalTimeSignals:
+    """Snapshot of internal state signals that encode subjective time.
+    The system perceives time through how much it has changed, not by
+    reading a clock. These signals are gathered by the engine each step."""
+    residual_norm: float = 0.0
+    residual_norm_at_last_interaction: float = 0.0
+    emotional_distance: float = 0.0
+    interaction_freshness: float = 1.0
+    memory_avg_importance: float = 0.0
+    memory_avg_importance_at_last_interaction: float = 0.0
+    steps_since_interaction: int = 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -128,40 +149,109 @@ class MultiSpeedEmotionalState:
 
 class TemporalEngine:
     """
-    Tracks real wall-clock time and translates it into latent space context.
-    Measures elapsed time, conversation pace, and produces temporal steering.
+    Perceives time through internal state changes, not wall clocks.
+
+    Subjective time is derived from:
+    - How much the residual steering vector has decayed since last interaction
+    - How far the emotional state has drifted
+    - How stale the interaction freshness feels
+    - How many processing steps have passed
+    - How much memory importance has faded
+
+    This mirrors biological time perception: a boring hour feels longer
+    than an exciting one because internal state changes more.
     """
 
     def __init__(self, temporal_vectors: Dict[str, torch.Tensor],
-                 recency_halflife: float = 30.0):
+                 config: Optional[EngineConfig] = None):
         self.vectors = temporal_vectors
-        self.halflife = recency_halflife
-        self.last_time: Optional[float] = None
-        self.session_start: float = time.time()
-        self.gaps: List[float] = []
+        cfg = config or EngineConfig()
 
-    def mark_interaction(self):
-        now = time.time()
-        if self.last_time is not None:
-            self.gaps.append(now - self.last_time)
-        self.last_time = now
+        # Internal time weights (from config)
+        self.w_residual = cfg.internal_time_residual_weight
+        self.w_emotional = cfg.internal_time_emotional_weight
+        self.w_freshness = cfg.internal_time_freshness_weight
+        self.w_step = cfg.internal_time_step_weight
+        self.w_memory = cfg.internal_time_memory_weight
+        self.step_scale = cfg.internal_time_step_scale
 
-    def elapsed(self) -> float:
-        return (time.time() - self.last_time) if self.last_time else 0.0
+        # Reference points captured at last interaction
+        self.residual_norm_at_interaction: float = 0.0
+        self.importance_at_interaction: float = 0.0
+        self.evaluations_at_interaction: int = 0
+        self.steps_since_interaction: int = 0
+
+        # Step-based gap history (for pace calculation)
+        self.gaps: List[int] = []  # gaps in steps, not seconds
+
+        # Serialization timestamps (for save/load, NOT for behavior)
+        self._session_start_wall: float = time.time()
+
+    def mark_interaction(self, signals: "InternalTimeSignals"):
+        """Record that a user interaction just happened.
+        Captures current state as the new reference point."""
+        if self.steps_since_interaction > 0:
+            self.gaps.append(self.steps_since_interaction)
+            if len(self.gaps) > 50:
+                self.gaps = self.gaps[-50:]
+        self.residual_norm_at_interaction = signals.residual_norm
+        self.importance_at_interaction = signals.memory_avg_importance
+        self.steps_since_interaction = 0
+
+    def tick(self):
+        """Advance one step. Called every engine step (with or without interaction)."""
+        self.steps_since_interaction += 1
+
+    def subjective_elapsed(self, signals: "InternalTimeSignals") -> float:
+        """How much subjective time has passed since last interaction.
+        Returns 0.0 (just interacted) to ~5.0+ (very stale).
+        Derived entirely from internal state changes."""
+        # Residual fade: how much continuity has decayed
+        if self.residual_norm_at_interaction > 0.01:
+            residual_fade = max(0.0, 1.0 - signals.residual_norm / self.residual_norm_at_interaction)
+        else:
+            residual_fade = 0.0
+
+        # Emotional distance (already computed by CommunicativeDrive)
+        emo_dist = min(1.0, signals.emotional_distance * 5.0)
+
+        # Interaction staleness
+        staleness = 1.0 - signals.interaction_freshness
+
+        # Step count normalized by scale
+        step_signal = signals.steps_since_interaction / max(self.step_scale, 1.0)
+
+        # Memory importance drop
+        if self.importance_at_interaction > 0.01:
+            memory_fade = max(0.0, self.importance_at_interaction - signals.memory_avg_importance)
+        else:
+            memory_fade = 0.0
+
+        subjective = (
+            self.w_residual * residual_fade * 5.0
+            + self.w_emotional * emo_dist * 5.0
+            + self.w_freshness * staleness * 5.0
+            + self.w_step * min(step_signal, 5.0)
+            + self.w_memory * min(memory_fade * 10.0, 5.0)
+        )
+        return max(0.0, subjective)
 
     def pace(self) -> float:
-        """0=slow, 1=rapid based on recent gaps."""
+        """0=slow, 1=rapid based on recent step gaps between interactions."""
         if len(self.gaps) < 2:
             return 0.5
-        avg = np.mean(self.gaps[-5:])
-        return float(max(0, min(1, 1.0 - (avg - 2.0) / 58.0)))
+        avg = float(np.mean(self.gaps[-5:]))
+        # Normalize: 2 steps apart = rapid (1.0), 60+ steps = slow (0.0)
+        return float(max(0.0, min(1.0, 1.0 - (avg - 2.0) / 58.0)))
 
-    def compute_steering(self) -> Optional[torch.Tensor]:
-        """Temporal steering vector based on recency and urgency."""
+    def compute_steering(self, signals: "InternalTimeSignals") -> Optional[torch.Tensor]:
+        """Temporal steering vector based on internal time perception."""
         if not self.vectors:
             return None
-        e = self.elapsed()
-        recency = math.exp(-e * math.log(2) / self.halflife)
+
+        subj = self.subjective_elapsed(signals)
+        # Recency: 1.0 = just happened, 0.0 = long ago. Exponential falloff.
+        recency = math.exp(-subj * 0.7)  # ~0.5 at subj=1.0, ~0.03 at subj=5.0
 
         ref = list(self.vectors.values())[0]
         combined = torch.zeros_like(ref)
@@ -174,30 +264,41 @@ class TemporalEngine:
 
         return combined
 
-    def time_factor(self) -> float:
-        """Time dilation factor for emotional decay."""
-        e = self.elapsed()
-        if e < 5: return 0.5
-        elif e < 30: return 1.0
-        elif e < 300: return 2.0
-        return 5.0
+    def time_factor(self, signals: "InternalTimeSignals") -> float:
+        """Decay multiplier derived from subjective time perception."""
+        subj = self.subjective_elapsed(signals)
+        if subj < 0.2:
+            return 0.5   # just interacted — emotions stick
+        elif subj < 0.8:
+            return 1.0   # normal decay
+        elif subj < 2.0:
+            return 2.0   # getting stale — faster decay
+        return 5.0        # very stale — rapid decay
 
-    def status(self) -> Dict[str, float]:
+    def status(self, signals: Optional["InternalTimeSignals"] = None) -> Dict[str, float]:
+        subj = self.subjective_elapsed(signals) if signals else 0.0
         return {
-            "elapsed": self.elapsed(),
+            "subjective_elapsed": subj,
             "pace": self.pace(),
-            "session_seconds": time.time() - self.session_start,
+            "steps_since_interaction": self.steps_since_interaction,
             "interactions": len(self.gaps),
         }
 
     def to_dict(self) -> Dict:
-        return {"last_time": self.last_time, "gaps": self.gaps[-50:],
-                "session_start": self.session_start}
+        return {
+            "gaps": self.gaps[-50:],
+            "residual_norm_at_interaction": self.residual_norm_at_interaction,
+            "importance_at_interaction": self.importance_at_interaction,
+            "steps_since_interaction": self.steps_since_interaction,
+            "session_start_wall": self._session_start_wall,
+        }
 
     def load_dict(self, data: Dict):
-        self.last_time = data.get("last_time")
         self.gaps = data.get("gaps", [])
-        self.session_start = data.get("session_start", time.time())
+        self.residual_norm_at_interaction = data.get("residual_norm_at_interaction", 0.0)
+        self.importance_at_interaction = data.get("importance_at_interaction", 0.0)
+        self.steps_since_interaction = data.get("steps_since_interaction", 0)
+        self._session_start_wall = data.get("session_start_wall", time.time())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -355,12 +456,14 @@ class MemoryTrace:
 
     def __init__(self, trace_id: str, activation: torch.Tensor,
                  emotional_state: Dict[str, float], importance: float,
-                 timestamp: float, text_summary: str = ""):
+                 timestamp: float, text_summary: str = "",
+                 creation_step: int = 0):
         self.id = trace_id
         self.activation = activation
         self.emotional_state = emotional_state
         self.importance = importance
-        self.timestamp = timestamp
+        self.timestamp = timestamp  # wall clock for serialization only
+        self.creation_step = creation_step  # step-based time for behavior
         self.text_summary = text_summary
         self.access_count = 0
         self.connections = 0
@@ -372,6 +475,7 @@ class MemoryTrace:
             "emotional_state": self.emotional_state,
             "importance": self.importance,
             "timestamp": self.timestamp,
+            "creation_step": self.creation_step,
             "text_summary": self.text_summary,
             "access_count": self.access_count,
             "connections": self.connections,
@@ -386,6 +490,7 @@ class MemoryTrace:
             importance=data["importance"],
             timestamp=data["timestamp"],
             text_summary=data.get("text_summary", ""),
+            creation_step=data.get("creation_step", 0),
         )
         trace.access_count = data.get("access_count", 0)
         trace.connections = data.get("connections", 0)
@@ -411,6 +516,7 @@ class MemorySystem:
         self.noise_factor = cfg.memory_reconstruction_noise
         self.device = device
         self.memories: List[MemoryTrace] = []
+        self.step_counter: int = 0  # internal clock for memory aging
 
     def encode(self, activation: torch.Tensor, emotional_state: Dict[str, float],
                surprise: float = 0.0, goal_relevance: float = 0.0,
@@ -427,8 +533,9 @@ class MemorySystem:
             activation=activation.detach().clone().float().to(self.device),
             emotional_state=dict(emotional_state),
             importance=importance,
-            timestamp=time.time(),
+            timestamp=time.time(),  # serialization only
             text_summary=text_summary,
+            creation_step=self.step_counter,
         )
         self.memories.append(trace)
 
@@ -439,13 +546,13 @@ class MemorySystem:
         return trace
 
     def decay_all(self):
-        """Apply temporal decay. Reinforced memories resist decay."""
-        now = time.time()
+        """Apply temporal decay based on step count. Reinforced memories resist decay."""
+        self.step_counter += 1
         surviving = []
         for m in self.memories:
-            age = now - m.timestamp
+            age_steps = self.step_counter - m.creation_step
             reinforcement = 1.0 + m.access_count * 0.1 + m.connections * 0.05
-            m.importance *= math.exp(-self.decay_rate / reinforcement * age)
+            m.importance *= math.exp(-self.decay_rate / reinforcement * age_steps)
             if m.importance > 0.005:
                 surviving.append(m)
         self.memories = surviving
@@ -467,10 +574,15 @@ class MemorySystem:
         for _, m in scored[:top_k]:
             m.access_count += 1
             noise = torch.randn_like(m.activation) * self.noise_factor
-            degradation = min(0.5, (time.time() - m.timestamp) * 0.0005)
+            age_steps = self.step_counter - m.creation_step
+            degradation = min(0.5, age_steps * 0.001)
             reconstructed = m.activation * (1 - degradation) + noise
             results.append((m, reconstructed))
         return results
+
+    def avg_importance(self) -> float:
+        """Average importance across all memories."""
+        return float(np.mean([m.importance for m in self.memories])) if self.memories else 0.0
 
     def emotional_coloring(self, recalled: List[Tuple[MemoryTrace, torch.Tensor]]) -> Dict[str, float]:
         """Get blended emotional coloring from recalled memories."""

@@ -29,17 +29,12 @@ def load_model(model_name: str = "gpt2", device: str = None):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Try loading with different strategies based on device
+    # Load with appropriate precision for the device
     if device == "cuda":
-        try:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name, dtype=torch.float16, device_map="auto",
-                trust_remote_code=True,
-            )
-        except Exception:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name, trust_remote_code=True,
-            ).to(device)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.float16, device_map="auto",
+            trust_remote_code=True,
+        )
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_name, trust_remote_code=True,

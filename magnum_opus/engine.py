@@ -16,6 +16,7 @@ import torch.nn.functional as F
 
 from magnum_opus.config import EngineConfig
 from magnum_opus.components import (
+    InternalTimeSignals,
     MultiSpeedEmotionalState, TemporalEngine, ResidualSteering,
     SubconsciousEngine, MemorySystem, DreamCycle, GrowthManager,
     AlignmentMonitor, CommunicativeDrive,
@@ -44,13 +45,28 @@ class SteeringHook:
         self.active = vector is not None
 
     def hook_fn(self, module, input, output):
-        hidden_states = output[0]
+        # Layer outputs vary by architecture:
+        #   GPT-2: tuple (hidden_states, presents, ...)
+        #   LLaMA/Mistral: plain Tensor, tuple, or ModelOutput dataclass
+        is_tensor = isinstance(output, torch.Tensor)
+        is_tuple = isinstance(output, tuple)
+        hidden_states = output if is_tensor else output[0]
+
         self.captured_states.append(hidden_states.detach().clone())
 
         if self.active and self.steering_vector is not None:
             sv = self.steering_vector.to(hidden_states.device).to(hidden_states.dtype)
             modified = hidden_states + sv.unsqueeze(0).unsqueeze(0)
-            return (modified,) + output[1:]
+
+            if is_tensor:
+                return modified
+            elif is_tuple:
+                return (modified,) + output[1:]
+            else:
+                # ModelOutput dataclass — replace first field
+                keys = list(output.keys())
+                output[keys[0]] = modified
+                return output
         return output
 
     def clear(self):
@@ -205,7 +221,7 @@ class MagnumOpusEngine:
         temporal_vecs = {k: v for k, v in emotion_vectors.items() if k.startswith("temporal_")}
 
         self.emotional_state = MultiSpeedEmotionalState(list(emotion_vectors.keys()))
-        self.temporal = TemporalEngine(temporal_vecs, self.config.temporal_recency_halflife)
+        self.temporal = TemporalEngine(temporal_vecs, self.config)
         self.residual = ResidualSteering(
             self.hidden_dim, self.config.residual_decay, self.config.residual_max_norm,
         )
@@ -231,10 +247,32 @@ class MagnumOpusEngine:
         self.step_count = 0
         self.conversation_history: List[Dict[str, str]] = []
         self._dream_thread: Optional[threading.Thread] = None
-        self.autonomous_messages: List[Dict[str, Any]] = []  # Queue for self-initiated messages
+        self.autonomous_messages: List[Dict[str, Any]] = []
 
-        # Idle tracking for auto-dream
+        # Cached internal signals (updated each step)
+        self._current_signals = InternalTimeSignals()
+
+        # Thread safety for heartbeat
+        self._lock = threading.Lock()
+
+        # Idle tracking for auto-dream (wall clock OK — this is scheduling, not perception)
         self._last_activity = time.time()
+
+    # ───────────────────────────────────────────────────────────────────
+    # INTERNAL TIME PERCEPTION
+    # ───────────────────────────────────────────────────────────────────
+
+    def _gather_internal_signals(self) -> InternalTimeSignals:
+        """Snapshot of internal state for subjective time perception."""
+        return InternalTimeSignals(
+            residual_norm=self.residual.norm(),
+            residual_norm_at_last_interaction=self.temporal.residual_norm_at_interaction,
+            emotional_distance=self.communicative_drive.emotional_distance,
+            interaction_freshness=self.communicative_drive.interaction_freshness,
+            memory_avg_importance=self.memory.avg_importance(),
+            memory_avg_importance_at_last_interaction=self.temporal.importance_at_interaction,
+            steps_since_interaction=self.temporal.steps_since_interaction,
+        )
 
     # ───────────────────────────────────────────────────────────────────
     # CORE: Compute the full steering vector
@@ -253,7 +291,7 @@ class MagnumOpusEngine:
                 emo_vec = emo_vec + weight * self.emotion_vectors[emotion].cpu().float()
 
         # 2. Temporal component
-        temporal_vec = self.temporal.compute_steering()
+        temporal_vec = self.temporal.compute_steering(self._current_signals)
         if temporal_vec is not None:
             temporal_vec = temporal_vec.cpu().float()
         else:
@@ -278,11 +316,18 @@ class MagnumOpusEngine:
     # CORE: Advance engine state by one step
     # ───────────────────────────────────────────────────────────────────
 
-    def _step(self, stimulus: Optional[Dict[str, float]] = None, dt: Optional[float] = None):
+    def _step(self, stimulus: Optional[Dict[str, float]] = None,
+              dt: Optional[float] = None, is_interaction: bool = True):
         """Internal state advancement."""
+        # Gather internal signals for time perception
+        self._current_signals = self._gather_internal_signals()
+
         if dt is None:
-            dt = self.temporal.time_factor()
-        self.temporal.mark_interaction()
+            dt = self.temporal.time_factor(self._current_signals)
+
+        if is_interaction:
+            self.temporal.mark_interaction(self._current_signals)
+        self.temporal.tick()
 
         if stimulus:
             for emotion, intensity in stimulus.items():
@@ -370,47 +415,48 @@ class MagnumOpusEngine:
         Automatically detects emotional content, updates engine state,
         and checks for user preference signals about communication frequency.
         """
-        # Notify communicative drive that user spoke (with current emotional state for drift tracking)
-        self.communicative_drive.user_spoke(self.emotional_state.get_blended())
+        with self._lock:
+            # Notify communicative drive that user spoke
+            self.communicative_drive.user_spoke(self.emotional_state.get_blended())
 
-        # Check if user is adjusting talk preference
-        pref_signal = self.communicative_drive.detect_preference_signal(user_input)
-        if pref_signal is not None:
-            self.communicative_drive.adjust_preference(pref_signal)
+            # Check if user is adjusting talk preference
+            pref_signal = self.communicative_drive.detect_preference_signal(user_input)
+            if pref_signal is not None:
+                self.communicative_drive.adjust_preference(pref_signal)
 
-        # Detect emotion from input text
-        detected = detect_emotional_content(user_input)
+            # Detect emotion from input text
+            detected = detect_emotional_content(user_input)
 
-        # Step the engine with detected emotions
-        self._step(stimulus=detected if detected else None)
+            # Step the engine with detected emotions
+            self._step(stimulus=detected if detected else None)
 
-        # Build prompt
-        if system_prompt:
-            prompt = f"{system_prompt}\n\nUser: {user_input}\nAssistant:"
-        else:
-            prompt = f"User: {user_input}\nAssistant:"
+            # Build prompt
+            if system_prompt:
+                prompt = f"{system_prompt}\n\nUser: {user_input}\nAssistant:"
+            else:
+                prompt = f"User: {user_input}\nAssistant:"
 
-        # Generate
-        text, states = self._generate(prompt, max_tokens=max_tokens)
+            # Generate
+            text, states = self._generate(prompt, max_tokens=max_tokens)
 
-        # Post-process
-        self._post_generation(user_input, text, states)
+            # Post-process
+            self._post_generation(user_input, text, states)
 
-        # Extract just the response
-        if "Assistant:" in text:
-            response = text.split("Assistant:")[-1].strip()
-        else:
-            response = text[len(prompt):].strip()
+            # Extract just the response
+            if "Assistant:" in text:
+                response = text.split("Assistant:")[-1].strip()
+            else:
+                response = text[len(prompt):].strip()
 
-        # Log conversation
-        self.conversation_history.append({
-            "user": user_input,
-            "assistant": response,
-            "timestamp": time.time(),
-            "emotional_state": self.emotional_state.get_blended(),
-        })
+            # Log conversation
+            self.conversation_history.append({
+                "user": user_input,
+                "assistant": response,
+                "timestamp": time.time(),
+                "emotional_state": self.emotional_state.get_blended(),
+            })
 
-        return response
+            return response
 
     def check_autonomous_urge(self) -> bool:
         """Check if the system wants to speak on its own."""
@@ -420,55 +466,73 @@ class MagnumOpusEngine:
         """
         Generate a message from the system's own internal state.
         Called when communicative pressure exceeds the threshold.
-
-        The thought seed comes from the dominant emotion.
-        The content is generated with full engine steering active,
-        meaning the output reflects the system's current emotional
-        landscape, subconscious goals, and accumulated experience.
         """
-        blended = self.emotional_state.get_blended()
+        with self._lock:
+            blended = self.emotional_state.get_blended()
 
-        # Get thought seed based on internal state
-        seed = self.communicative_drive.get_thought_seed(
-            blended, self.subconscious.goal_vector
-        )
+            # Get thought seed based on internal state
+            seed = self.communicative_drive.get_thought_seed(
+                blended, self.subconscious.goal_vector
+            )
 
-        # Step the engine (autonomous activity)
-        self._step(dt=0.5)
+            # Step the engine (autonomous activity, not a user interaction)
+            self._step(dt=0.5, is_interaction=False)
 
-        # Generate from the thought seed with full steering
-        prompt = f"Assistant: {seed}"
-        text, states = self._generate(prompt, max_tokens=80)
-        self._post_generation(seed, text, states)
+            # Generate from the thought seed with full steering
+            prompt = f"Assistant: {seed}"
+            text, states = self._generate(prompt, max_tokens=80)
+            self._post_generation(seed, text, states)
 
-        # Extract response
-        if seed in text:
-            response = text.split(seed)[-1].strip()
-            response = seed + " " + response
-        else:
-            response = seed + " " + text[len(prompt):].strip()
+            # Extract response
+            if seed in text:
+                response = text.split(seed)[-1].strip()
+                response = seed + " " + response
+            else:
+                response = seed + " " + text[len(prompt):].strip()
 
-        # Mark that the system spoke (captures residual norm for latent cooldown)
-        self.communicative_drive.spoke(current_residual_norm=self.residual.norm())
+            # Mark that the system spoke
+            self.communicative_drive.spoke(current_residual_norm=self.residual.norm())
 
-        # Log
-        self.conversation_history.append({
-            "user": "[autonomous]",
-            "assistant": response,
-            "timestamp": time.time(),
-            "emotional_state": blended,
-            "autonomous": True,
-        })
+            # Log
+            self.conversation_history.append({
+                "user": "[autonomous]",
+                "assistant": response,
+                "timestamp": time.time(),
+                "emotional_state": blended,
+                "autonomous": True,
+            })
 
-        # Queue for dashboard
-        self.autonomous_messages.append({
-            "message": response,
-            "timestamp": time.time(),
-            "emotional_state": blended,
-            "pressure_at_trigger": self.communicative_drive.pressure,
-        })
+            # Queue for dashboard
+            self.autonomous_messages.append({
+                "message": response,
+                "timestamp": time.time(),
+                "emotional_state": blended,
+                "pressure_at_trigger": self.communicative_drive.pressure,
+            })
 
-        return response
+            return response
+
+    def tick(self):
+        """One heartbeat — advance internal state without user input.
+        Called by the heartbeat thread between interactions."""
+        with self._lock:
+            self._current_signals = self._gather_internal_signals()
+            blended = self.emotional_state.get_blended()
+            self.communicative_drive.tick(
+                emotional_state=blended,
+                subconscious_goal_strength=self.subconscious.goal_strength,
+                residual_norm=self.residual.norm(),
+                dt=0.5,
+            )
+            self.temporal.tick()
+            self.step_count += 1
+
+    def get_autonomous_messages(self) -> List[Dict[str, Any]]:
+        """Drain queued autonomous messages for the UI."""
+        with self._lock:
+            msgs = list(self.autonomous_messages)
+            self.autonomous_messages.clear()
+            return msgs
 
     def generate_raw(self, prompt: str, max_tokens: Optional[int] = None,
                      stimulus: Optional[Dict[str, float]] = None) -> str:
@@ -521,7 +585,8 @@ class MagnumOpusEngine:
 
     def dream(self, verbose: bool = True) -> Dict[str, Any]:
         """Run a dream cycle (synchronous)."""
-        return self._dream_cycle.run(verbose=verbose)
+        with self._lock:
+            return self._dream_cycle.run(verbose=verbose)
 
     def dream_async(self):
         """Start a dream cycle in a background thread."""
@@ -544,14 +609,56 @@ class MagnumOpusEngine:
     # ───────────────────────────────────────────────────────────────────
 
     def status(self) -> Dict[str, Any]:
-        """Full engine status for monitoring."""
+        """Full engine status for monitoring — all subsystems visible."""
+        signals = self._current_signals
+
+        # Project residual vector onto emotion vectors: what does continuity "feel like"?
+        residual_feelings = {}
+        residual_vec = self.residual.residual
+        for name, vec in self.emotion_vectors.items():
+            if not name.startswith("temporal_"):
+                proj = torch.dot(residual_vec.cpu().float(), vec.cpu().float()).item()
+                residual_feelings[name] = round(proj, 4)
+
+        # Project subconscious goal onto emotion vectors: what does the goal "feel like"?
+        goal_feelings = {}
+        for name, vec in self.emotion_vectors.items():
+            if not name.startswith("temporal_"):
+                proj = torch.dot(self.subconscious.goal_vector.cpu().float(), vec.cpu().float()).item()
+                goal_feelings[name] = round(proj, 4)
+
+        # Top memories by importance
+        sorted_memories = sorted(self.memory.memories, key=lambda x: x.importance, reverse=True)
+        memory_list = [
+            {
+                "id": m.id,
+                "text": m.text_summary,
+                "importance": round(m.importance, 3),
+                "emotional_coloring": {
+                    k: round(v, 2) for k, v in m.emotional_state.items() if abs(v) > 0.05
+                },
+                "access_count": m.access_count,
+                "connections": m.connections,
+            }
+            for m in sorted_memories[:20]
+        ]
+
         return {
             "step": self.step_count,
             "emotional_state": self.emotional_state.snapshot(),
-            "temporal": self.temporal.status(),
-            "residual_norm": self.residual.norm(),
-            "subconscious": self.subconscious.status(),
-            "memory": self.memory.status(),
+            "temporal": self.temporal.status(signals),
+            "residual": {
+                "norm": self.residual.norm(),
+                "feelings": residual_feelings,
+            },
+            "subconscious": {
+                **self.subconscious.status(),
+                "goal_feelings": goal_feelings,
+            },
+            "memory": {
+                **self.memory.status(),
+                "memories": memory_list,
+            },
             "growth": self.growth.status(),
             "alignment": self.alignment.status(),
             "communicative_drive": self.communicative_drive.status(),
@@ -563,12 +670,6 @@ class MagnumOpusEngine:
     def alignment_health(self) -> Dict[str, Any]:
         """Quick alignment health check."""
         return self.alignment.check_drift()
-
-    def get_autonomous_messages(self) -> List[Dict[str, Any]]:
-        """Drain the autonomous message queue."""
-        msgs = list(self.autonomous_messages)
-        self.autonomous_messages = []
-        return msgs
 
     # ───────────────────────────────────────────────────────────────────
     # PUBLIC API: Persistence
@@ -639,7 +740,7 @@ class MagnumOpusEngine:
         self.emotional_state = MultiSpeedEmotionalState(list(self.emotion_vectors.keys()))
         self.temporal = TemporalEngine(
             {k: v for k, v in self.emotion_vectors.items() if k.startswith("temporal_")},
-            self.config.temporal_recency_halflife,
+            self.config,
         )
         self.residual = ResidualSteering(
             self.hidden_dim, self.config.residual_decay, self.config.residual_max_norm,
