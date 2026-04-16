@@ -4,8 +4,10 @@ Integrates all components, manages steering hooks, handles generation,
 and provides save/load for persistent state across sessions.
 """
 
+import collections
 import json
 import os
+import random
 import time
 import threading
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,7 +19,7 @@ import torch.nn.functional as F
 from magnum_opus.config import EngineConfig
 from magnum_opus.components import (
     InternalTimeSignals,
-    MultiSpeedEmotionalState, TemporalEngine, ResidualSteering,
+    MultiSpeedEmotionalState, TemporalEngine, ResidualSteering, ThoughtResidual,
     SubconsciousEngine, MemorySystem, DreamCycle, GrowthManager,
     AlignmentMonitor, CommunicativeDrive,
 )
@@ -225,6 +227,9 @@ class MagnumOpusEngine:
         self.residual = ResidualSteering(
             self.hidden_dim, self.config.residual_decay, self.config.residual_max_norm,
         )
+        self.thought_residual = ThoughtResidual(
+            self.hidden_dim, decay=self.config.thought_residual_decay,
+        )
         self.subconscious = SubconsciousEngine(
             emotion_vectors, self.hidden_dim,
             self.config.subconscious_amplitude, self.config.subconscious_goal_momentum,
@@ -248,6 +253,10 @@ class MagnumOpusEngine:
         self.conversation_history: List[Dict[str, str]] = []
         self._dream_thread: Optional[threading.Thread] = None
         self.autonomous_messages: List[Dict[str, Any]] = []
+
+        # Rolling log of idle events (spontaneous recalls, speculations, drift spikes)
+        # Visible proof in the UI that the engine is alive when no one's talking
+        self.idle_events: collections.deque = collections.deque(maxlen=20)
 
         # Cached internal signals (updated each step)
         self._current_signals = InternalTimeSignals()
@@ -300,14 +309,19 @@ class MagnumOpusEngine:
         # 3. Subconscious component
         sub_vec = self.subconscious.get_steering(emo_weights).cpu().float()
 
-        # 4. Combine
+        # 4. Thought residual — echo of what the model itself felt in the past.
+        #    This is how the engine feels its own history carrying forward.
+        thought_vec = self.thought_residual.get()
+
+        # 5. Combine
         combined = (
             emo_vec * self.config.steering_strength
             + temporal_vec * 1.0
             + sub_vec * 0.5
+            + thought_vec * self.config.thought_residual_strength
         )
 
-        # 5. Residual (temporal continuity)
+        # 6. Residual (temporal continuity of our own steering commands)
         steered = self.residual.step(combined)
 
         return steered.to(self.device)
@@ -380,6 +394,9 @@ class MagnumOpusEngine:
 
         last_state = states[-1].mean(dim=1).squeeze(0).float()
 
+        # Imprint into thought residual — the model's own felt state echoes forward
+        self.thought_residual.imprint(last_state)
+
         # Encode memory
         self.memory.encode(
             activation=last_state,
@@ -394,7 +411,7 @@ class MagnumOpusEngine:
         recalled = self.memory.recall(last_state, top_k=3)
         coloring = self.memory.emotional_coloring(recalled)
         for emotion, intensity in coloring.items():
-            self.emotional_state.stimulate(emotion, intensity * 0.3)
+            self.emotional_state.stimulate(emotion, intensity * 0.5)
 
         # Subconscious evaluation
         noise = self.subconscious.generate_noise(self.emotional_state.get_blended())
@@ -513,19 +530,187 @@ class MagnumOpusEngine:
             return response
 
     def tick(self):
-        """One heartbeat — advance internal state without user input.
+        """One heartbeat — advance ALL internal state without user input.
+        This is the engine's continuous life: emotions decay and drift,
+        memories occasionally reactivate, thought residual fades, the
+        subconscious speculates, communicative pressure builds.
         Called by the heartbeat thread between interactions."""
         with self._lock:
             self._current_signals = self._gather_internal_signals()
             blended = self.emotional_state.get_blended()
+
+            # Emotions decay continuously (toward homeostatic baseline)
+            self.emotional_state.decay_step(self.config.idle_emotional_decay_dt)
+
+            # Stochastic drift — living tissue, not chaos
+            self._apply_idle_drift()
+
+            # Possible spontaneous memory recall (re-experience at full strength)
+            self._maybe_spontaneous_recall()
+
+            # Thought residual (echo of past model state) slowly fades
+            self.thought_residual.step_decay()
+
+            # Communicative drive (pressure to speak autonomously)
             self.communicative_drive.tick(
                 emotional_state=blended,
                 subconscious_goal_strength=self.subconscious.goal_strength,
                 residual_norm=self.residual.norm(),
                 dt=0.5,
             )
+
+            # Temporal perception ticks forward
             self.temporal.tick()
+
+            # Speculative subconscious — actually run short forward passes
+            # to try candidate thoughts, every N ticks
+            if (self.step_count > 0
+                    and self.step_count % self.config.speculative_cadence_ticks == 0):
+                self._speculate()
+
+            # Memory slow decay
+            self.memory.decay_all()
+
             self.step_count += 1
+
+    # ───────────────────────────────────────────────────────────────────
+    # IDLE COGNITIVE DYNAMICS — what happens when nobody's talking
+    # ───────────────────────────────────────────────────────────────────
+
+    def _apply_idle_drift(self):
+        """Small random perturbation per emotion per tick — background hum.
+        Without this, emotions settle into baseline and freeze. With it,
+        the inner life keeps moving whether or not a user is present."""
+        amp = self.config.idle_drift_amplitude
+        if amp <= 0:
+            return
+        for emotion in list(self.emotional_state.fast.keys()):
+            delta = (random.random() - 0.5) * 2 * amp
+            self.emotional_state.stimulate(emotion, delta)
+            if abs(delta) > amp * 0.9 and len(self.emotional_state.fast) > 0:
+                # Only log the most noticeable drifts to avoid spam
+                if random.random() < 0.02:
+                    self.idle_events.append({
+                        "type": "drift",
+                        "emotion": emotion,
+                        "delta": round(float(delta), 4),
+                        "step": self.step_count,
+                    })
+
+    def _maybe_spontaneous_recall(self):
+        """Probabilistic re-experience of a past memory during idle.
+        The reactivated emotional coloring reaches higher strength than
+        post-generation recall — this is closer to true remembering."""
+        if random.random() > self.config.idle_recall_probability:
+            return
+        if not self.memory.memories:
+            return
+        mems = self.memory.memories
+        weights = [max(float(m.importance), 0.0) for m in mems]
+        total = sum(weights)
+        if total < 1e-6:
+            return
+        r = random.random() * total
+        acc = 0.0
+        chosen = mems[-1]
+        for m, w in zip(mems, weights):
+            acc += w
+            if acc >= r:
+                chosen = m
+                break
+
+        # Reactivate its emotional coloring
+        strength = self.config.idle_recall_coloring_strength
+        for emo, intensity in chosen.emotional_state.items():
+            self.emotional_state.stimulate(emo, intensity * strength)
+        chosen.access_count += 1
+
+        # Re-imprint its activation as a "remembered thought"
+        if getattr(chosen, "activation", None) is not None:
+            try:
+                self.thought_residual.imprint(chosen.activation.to('cpu').float())
+            except Exception:
+                pass
+
+        self.idle_events.append({
+            "type": "recall",
+            "text": getattr(chosen, "text_summary", "") or "",
+            "step": self.step_count,
+        })
+
+    def _speculate(self):
+        """Engine's internal daydreaming — actually tries candidate thoughts
+        via short speculative forward passes, and adopts whichever resonates
+        best with the current goal as the new subconscious direction."""
+        if not self.subconscious.goal_vector_nonzero():
+            return
+
+        rounds = max(1, int(self.config.speculative_rounds))
+        horizon = max(1, int(self.config.speculative_horizon_tokens))
+
+        try:
+            seed_ids = self.tokenizer.encode("...", return_tensors="pt").to(self.device)
+        except Exception:
+            return
+
+        blended = self.emotional_state.get_blended()
+        goal_on_cpu = self.subconscious.goal_vector.detach().cpu().float()
+        goal_norm = goal_on_cpu.norm()
+        if goal_norm < 1e-6:
+            return
+
+        candidates: List[Tuple[float, torch.Tensor, torch.Tensor]] = []
+        for _ in range(rounds):
+            cand = torch.zeros(self.hidden_dim)
+            for emo, w in blended.items():
+                if emo in self.emotion_vectors:
+                    perturbed = w + (random.random() - 0.5) * 0.3
+                    cand = cand + perturbed * self.emotion_vectors[emo].cpu().float()
+            cand = cand + 0.5 * goal_on_cpu
+
+            # Run a short speculative forward pass with this candidate
+            self.hook.clear()
+            try:
+                self.hook.set_steering(cand.to(self.device))
+                with torch.no_grad():
+                    self.model.generate(
+                        seed_ids,
+                        max_new_tokens=horizon,
+                        do_sample=False,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                    )
+            except Exception:
+                self.hook.set_steering(None)
+                continue
+            self.hook.set_steering(None)
+
+            if not self.hook.captured_states:
+                continue
+            last = self.hook.captured_states[-1]
+            final = last.mean(dim=(0, 1)).detach().cpu().float()
+            final_norm = final.norm()
+            if final_norm < 1e-6:
+                continue
+            resonance = F.cosine_similarity(
+                final.unsqueeze(0), goal_on_cpu.unsqueeze(0),
+            ).item()
+            candidates.append((float(resonance), cand, final))
+
+        if not candidates:
+            return
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        best_resonance, best_vec, best_state = candidates[0]
+
+        self.subconscious.adopt_speculation(best_vec, best_resonance)
+        # Imagined thoughts imprint at half strength — they weren't really felt
+        self.thought_residual.imprint(best_state * 0.5)
+
+        self.idle_events.append({
+            "type": "speculation",
+            "resonance": round(float(best_resonance), 4),
+            "rounds": len(candidates),
+            "step": self.step_count,
+        })
 
     def get_autonomous_messages(self) -> List[Dict[str, Any]]:
         """Drain queued autonomous messages for the UI."""
@@ -533,6 +718,11 @@ class MagnumOpusEngine:
             msgs = list(self.autonomous_messages)
             self.autonomous_messages.clear()
             return msgs
+
+    def get_idle_events(self) -> List[Dict[str, Any]]:
+        """Snapshot (non-destructive) of recent idle events for the UI."""
+        with self._lock:
+            return list(self.idle_events)
 
     def generate_raw(self, prompt: str, max_tokens: Optional[int] = None,
                      stimulus: Optional[Dict[str, float]] = None) -> str:
@@ -643,6 +833,9 @@ class MagnumOpusEngine:
             for m in sorted_memories[:20]
         ]
 
+        # Thought residual — what the model was just "thinking" projected onto emotions
+        thought_feelings = self.thought_residual.project_onto(self.emotion_vectors)
+
         return {
             "step": self.step_count,
             "emotional_state": self.emotional_state.snapshot(),
@@ -650,6 +843,11 @@ class MagnumOpusEngine:
             "residual": {
                 "norm": self.residual.norm(),
                 "feelings": residual_feelings,
+            },
+            "thought_residual": {
+                "norm": self.thought_residual.norm(),
+                "feelings": thought_feelings,
+                "trace_count": self.thought_residual.trace_count,
             },
             "subconscious": {
                 **self.subconscious.status(),
@@ -662,6 +860,7 @@ class MagnumOpusEngine:
             "growth": self.growth.status(),
             "alignment": self.alignment.status(),
             "communicative_drive": self.communicative_drive.status(),
+            "idle_events": list(self.idle_events),
             "conversation_turns": len(self.conversation_history),
             "dream_cycles": self._dream_cycle.cycle_count,
             "idle_seconds": self.idle_seconds(),
@@ -744,6 +943,9 @@ class MagnumOpusEngine:
         )
         self.residual = ResidualSteering(
             self.hidden_dim, self.config.residual_decay, self.config.residual_max_norm,
+        )
+        self.thought_residual = ThoughtResidual(
+            self.hidden_dim, decay=self.config.thought_residual_decay,
         )
         self.subconscious = SubconsciousEngine(
             self.emotion_vectors, self.hidden_dim,

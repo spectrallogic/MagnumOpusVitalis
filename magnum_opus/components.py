@@ -346,6 +346,85 @@ class ResidualSteering:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# THOUGHT RESIDUAL
+# Re-injects a dim echo of the model's OWN past hidden states into steering.
+# This is the substrate that lets the engine feel its own history —
+# time perception emerges from the felt presence of past thought.
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ThoughtResidual:
+    """Decaying memory of what the MODEL felt, not what we pushed.
+
+    ResidualSteering accumulates the vectors we inject; ThoughtResidual
+    accumulates the vectors the model itself produced. Re-injecting a dim
+    echo gives the next generation a continuous sense of its own trajectory,
+    which is the felt substrate of subjective time.
+    """
+
+    def __init__(self, hidden_dim: int, decay: float = 0.90, max_norm: float = 1.5):
+        self.hidden_dim = hidden_dim
+        self.decay = decay
+        self.max_norm = max_norm
+        self.vector = torch.zeros(hidden_dim)
+        self.trace_count = 0
+
+    def imprint(self, hidden_state_mean: torch.Tensor):
+        """Fold a normalized print of the model's actual felt state into the echo."""
+        imp = hidden_state_mean.detach().cpu().float()
+        n = imp.norm()
+        if n > 1e-6:
+            imp = imp / n  # direction only — magnitude doesn't dominate
+        self.vector = self.decay * self.vector + 0.1 * imp
+        cur_norm = self.vector.norm()
+        if cur_norm > self.max_norm:
+            self.vector = self.vector * (self.max_norm / cur_norm)
+        self.trace_count += 1
+
+    def step_decay(self):
+        """Called every tick so the echo fades even without new imprints."""
+        self.vector = self.decay * self.vector
+
+    def get(self) -> torch.Tensor:
+        return self.vector.clone()
+
+    def norm(self) -> float:
+        return float(self.vector.norm())
+
+    def project_onto(self, emotion_vectors: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """What emotions does the thought-echo currently resemble?"""
+        feelings = {}
+        self_norm = self.vector.norm()
+        if self_norm < 1e-6:
+            return {name: 0.0 for name in emotion_vectors if not name.startswith("temporal_")}
+        for name, vec in emotion_vectors.items():
+            if name.startswith("temporal_"):
+                continue
+            v = vec.cpu().float()
+            if v.norm() > 1e-6:
+                sim = F.cosine_similarity(self.vector.unsqueeze(0), v.unsqueeze(0)).item()
+            else:
+                sim = 0.0
+            feelings[name] = round(float(sim), 4)
+        return feelings
+
+    def reset(self):
+        self.vector = torch.zeros(self.hidden_dim)
+        self.trace_count = 0
+
+    def to_dict(self) -> Dict:
+        return {
+            "vector": self.vector.tolist(),
+            "decay": self.decay,
+            "trace_count": self.trace_count,
+        }
+
+    def load_dict(self, data: Dict):
+        if "vector" in data:
+            self.vector = torch.tensor(data["vector"], dtype=torch.float32)
+        self.trace_count = data.get("trace_count", 0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SUBCONSCIOUS ENGINE
 # Principle 4 (Subconscious Generates Goals) - structured noise in latent space
 # ═══════════════════════════════════════════════════════════════════════════
@@ -371,6 +450,7 @@ class SubconsciousEngine:
         self.goal_vector = torch.zeros(hidden_dim, device=device)
         self.goal_strength = 0.0
         self.resonance_history: List[float] = []
+        self.last_speculation: Dict[str, float] = {"resonance": 0.0, "rounds": 0}
 
     def generate_noise(self, emotional_state: Dict[str, float]) -> torch.Tensor:
         """Layer 0+1: Noise structured by emotional state."""
@@ -423,12 +503,30 @@ class SubconsciousEngine:
             return noise * 0.7 + goal_dir * 0.3 * min(self.goal_strength, 1.0)
         return noise
 
+    def adopt_speculation(self, vector: torch.Tensor, resonance: float):
+        """Merge the winning candidate from a speculative forward pass into the goal.
+        This is how the subconscious learns from its own daydreaming."""
+        vec_on_device = vector.to(self.device)
+        if self.goal_vector is None or float(self.goal_vector.norm()) < 1e-6:
+            self.goal_vector = vec_on_device.clone()
+        else:
+            m = self.momentum
+            self.goal_vector = m * self.goal_vector + (1 - m) * vec_on_device
+        self.goal_strength = float(self.goal_vector.norm())
+        self.resonance_history.append(float(resonance))
+        self.last_speculation = {"resonance": float(resonance), "rounds": 1}
+
+    def goal_vector_nonzero(self) -> bool:
+        """Whether there's a meaningful goal to speculate toward."""
+        return self.goal_vector is not None and float(self.goal_vector.norm()) > 1e-4
+
     def status(self) -> Dict[str, float]:
         return {
             "goal_strength": self.goal_strength,
             "avg_resonance": float(np.mean(self.resonance_history[-20:]))
                             if self.resonance_history else 0.0,
             "total_evaluations": len(self.resonance_history),
+            "last_speculation": dict(self.last_speculation),
         }
 
     def to_dict(self) -> Dict:

@@ -328,6 +328,22 @@ class EngineConfig:
     internal_time_memory_weight: float = 0.1
     internal_time_step_scale: float = 20.0  # steps for ~1.0 subjective time
 
+    # Thought residual — re-injection of the model's own past hidden states
+    # Lets the model feel an echo of what it actually thought, not just what we pushed
+    thought_residual_decay: float = 0.90
+    thought_residual_strength: float = 0.6
+
+    # Idle cognitive dynamics — what happens during every heartbeat
+    idle_emotional_decay_dt: float = 0.5
+    idle_drift_amplitude: float = 0.04          # stochastic emotional perturbation per tick
+    idle_recall_probability: float = 0.08       # chance of spontaneous memory recall per tick
+    idle_recall_coloring_strength: float = 0.5  # strength of reactivated emotions on recall
+
+    # Speculative subconscious — daydreaming cadence and depth
+    speculative_rounds: int = 3                 # candidate thoughts tried per speculation
+    speculative_horizon_tokens: int = 2         # forward-pass tokens per candidate
+    speculative_cadence_ticks: int = 20         # run speculation every N idle ticks
+
     # Generation
     default_max_tokens: int = 150
     default_temperature: float = 0.7

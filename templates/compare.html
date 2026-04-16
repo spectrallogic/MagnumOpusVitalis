@@ -390,6 +390,33 @@
                     </div>
                 </div>
 
+                <!-- Inner Life (thought residual + idle events) -->
+                <div class="dash-section">
+                    <div class="dash-title" onclick="toggle(this)">Inner Life</div>
+                    <div class="dash-body" id="dash-inner-life">
+                        <div class="metric">
+                            <div class="metric-label">Thought Echo Norm</div>
+                            <div class="metric-value" id="thought-residual-norm">0.000</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Traces Imprinted</div>
+                            <div class="metric-value" id="thought-trace-count">0</div>
+                        </div>
+                        <div style="margin-top:6px">
+                            <div class="metric-label">What I was just thinking:</div>
+                            <div id="thought-feelings"></div>
+                        </div>
+                        <div style="margin-top:10px">
+                            <div class="metric-label">Last speculation resonance:</div>
+                            <div class="metric-value" id="last-spec-resonance">0.000</div>
+                        </div>
+                        <div style="margin-top:10px">
+                            <div class="metric-label">Idle events (recent):</div>
+                            <div id="idle-event-log" style="max-height:180px;overflow-y:auto;font-family:monospace;font-size:11px;color:#495057;margin-top:4px;border:1px solid #e9ecef;border-radius:4px;padding:6px;background:#fafbfc"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Subconscious -->
                 <div class="dash-section">
                     <div class="dash-title" onclick="toggle(this)">Subconscious</div>
@@ -573,6 +600,45 @@
             const res = s.residual || {};
             document.getElementById('residual-norm').textContent = (res.norm || 0).toFixed(3);
             renderBars('residual-feelings', res.feelings || {}, 5.0);
+
+            // Inner Life — thought residual + idle events
+            const tr = s.thought_residual || {};
+            document.getElementById('thought-residual-norm').textContent = (tr.norm || 0).toFixed(3);
+            document.getElementById('thought-trace-count').textContent = tr.trace_count || 0;
+            renderBars('thought-feelings', tr.feelings || {}, 1.0);
+
+            const lastSpec = (s.subconscious && s.subconscious.last_speculation) || {};
+            document.getElementById('last-spec-resonance').textContent =
+                (lastSpec.resonance || 0).toFixed(3);
+
+            const log = document.getElementById('idle-event-log');
+            const events = s.idle_events || [];
+            if (events.length === 0) {
+                log.innerHTML = '<span style="color:#adb5bd">(no idle events yet — give it a moment)</span>';
+            } else {
+                log.innerHTML = '';
+                events.slice().reverse().forEach(ev => {
+                    const line = document.createElement('div');
+                    let detail = '';
+                    if (ev.type === 'recall') {
+                        detail = 'remembered: ' + escapeHtml((ev.text || '').slice(0, 60));
+                    } else if (ev.type === 'speculation') {
+                        detail = 'speculated (resonance ' + (ev.resonance || 0).toFixed(3)
+                                 + ', rounds ' + (ev.rounds || 0) + ')';
+                    } else if (ev.type === 'drift') {
+                        detail = 'drift: ' + ev.emotion + ' ' + (ev.delta > 0 ? '+' : '')
+                                 + (ev.delta || 0).toFixed(3);
+                    } else {
+                        detail = ev.type;
+                    }
+                    const color = ev.type === 'recall' ? '#5c7cfa'
+                                : ev.type === 'speculation' ? '#9775fa'
+                                : '#adb5bd';
+                    line.innerHTML = '<span style="color:' + color + ';font-weight:600">['
+                                   + (ev.step || 0) + ']</span> ' + detail;
+                    log.appendChild(line);
+                });
+            }
 
             // Subconscious
             const sub = s.subconscious || {};

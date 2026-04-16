@@ -29,12 +29,40 @@ def load_model(model_name: str = "gpt2", device: str = None):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Load with appropriate precision for the device
+    # Load with appropriate precision for the device.
+    # First try pure GPU in float16; if that OOMs, use explicit max_memory
+    # spill to CPU RAM (not "meta" or disk — custom hooks break on meta
+    # device tensors). Last resort is pure CPU.
     if device == "cuda":
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=torch.float16, device_map="auto",
-            trust_remote_code=True,
-        )
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name, torch_dtype=torch.float16,
+                trust_remote_code=True,
+            ).to(device)
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if "out of memory" not in str(e).lower() and "CUDA" not in str(e):
+                raise
+            torch.cuda.empty_cache()
+            # Find free VRAM and leave ~1GB headroom for activations
+            free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+            gpu_budget_gib = max(2, int(free_bytes / (1024 ** 3)) - 1)
+            print(f"  Model too large for VRAM alone — spilling to CPU RAM "
+                  f"(GPU budget: {gpu_budget_gib}GiB)")
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name, torch_dtype=torch.float16,
+                    device_map="auto",
+                    max_memory={0: f"{gpu_budget_gib}GiB", "cpu": "48GiB"},
+                    trust_remote_code=True,
+                )
+            except Exception:
+                print(f"  Spill load failed — falling back to pure CPU")
+                torch.cuda.empty_cache()
+                device = "cpu"
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name, torch_dtype=torch.float32,
+                    trust_remote_code=True,
+                ).to(device)
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_name, trust_remote_code=True,
