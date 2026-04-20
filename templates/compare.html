@@ -411,6 +411,26 @@
                             <div class="metric-value" id="last-spec-resonance">0.000</div>
                         </div>
                         <div style="margin-top:10px">
+                            <div class="metric-label">Speculation tree tips (top beam):</div>
+                            <div id="spec-tree-tips" style="font-family:monospace;font-size:11px;color:#495057;margin-top:4px;border:1px solid #e9ecef;border-radius:4px;padding:6px;background:#fafbfc;max-height:90px;overflow-y:auto">
+                                <span style="color:#adb5bd">(no tree yet)</span>
+                            </div>
+                        </div>
+                        <div style="margin-top:10px">
+                            <div class="metric-label">
+                                Knowledge sparks (active norm:
+                                <span id="spark-active-norm">0.000</span>,
+                                fired: <span id="spark-fired-total">0</span>)
+                            </div>
+                            <div id="spark-log" style="font-family:monospace;font-size:11px;color:#495057;margin-top:4px;border:1px solid #e9ecef;border-radius:4px;padding:6px;background:#fafbfc;max-height:100px;overflow-y:auto">
+                                <span style="color:#adb5bd">(no sparks yet)</span>
+                            </div>
+                        </div>
+                        <div style="margin-top:10px">
+                            <div class="metric-label">Latent drift (model-derived projections):</div>
+                            <div id="drift-projections"></div>
+                        </div>
+                        <div style="margin-top:10px">
                             <div class="metric-label">Idle events (recent):</div>
                             <div id="idle-event-log" style="max-height:180px;overflow-y:auto;font-family:monospace;font-size:11px;color:#495057;margin-top:4px;border:1px solid #e9ecef;border-radius:4px;padding:6px;background:#fafbfc"></div>
                         </div>
@@ -522,15 +542,18 @@
             body.classList.toggle('collapsed');
         }
 
-        function addMessage(panelId, role, text, isAutonomous) {
+        function addMessage(panelId, role, text, isAutonomous, latentSeeded) {
             const container = document.getElementById(panelId);
             const loading = container.querySelector('.loading');
             const div = document.createElement('div');
             const cls = isAutonomous ? 'message message-autonomous' : `message message-${role}`;
             div.className = cls;
             const label = isAutonomous ? 'self' : role;
+            const badge = (isAutonomous && latentSeeded)
+                ? ' <span style="background:#fff4d6;color:#c58a00;font-size:9px;padding:1px 5px;border-radius:6px;margin-left:4px;letter-spacing:0.3px">LATENT-SEEDED</span>'
+                : '';
             div.innerHTML = `
-                <div class="message-role">${label}</div>
+                <div class="message-role">${label}${badge}</div>
                 <div class="message-text">${escapeHtml(text || '(empty)')}</div>
             `;
             container.insertBefore(div, loading);
@@ -607,9 +630,55 @@
             document.getElementById('thought-trace-count').textContent = tr.trace_count || 0;
             renderBars('thought-feelings', tr.feelings || {}, 1.0);
 
-            const lastSpec = (s.subconscious && s.subconscious.last_speculation) || {};
+            const lastSpec = s.speculation_last
+                || (s.subconscious && s.subconscious.last_speculation)
+                || {};
             document.getElementById('last-spec-resonance').textContent =
-                (lastSpec.resonance || 0).toFixed(3);
+                (lastSpec.best_resonance || lastSpec.resonance || 0).toFixed(3);
+
+            // Speculation tree tips — decoded continuations per surviving branch
+            const tipsEl = document.getElementById('spec-tree-tips');
+            const tips = lastSpec.decoded_tips || [];
+            if (tips.length === 0) {
+                tipsEl.innerHTML = '<span style="color:#adb5bd">(no tree yet)</span>';
+            } else {
+                tipsEl.innerHTML = '';
+                tips.forEach((tip, i) => {
+                    const line = document.createElement('div');
+                    const rank = i === 0 ? '★' : '·';
+                    const color = i === 0 ? '#9775fa' : '#adb5bd';
+                    line.innerHTML = '<span style="color:' + color
+                                   + ';font-weight:600">' + rank + '</span> '
+                                   + escapeHtml((tip || '').slice(0, 120));
+                    tipsEl.appendChild(line);
+                });
+            }
+
+            // Knowledge Sparks — current active vector + recent sparks
+            const sparks = s.knowledge_sparks || {};
+            document.getElementById('spark-active-norm').textContent =
+                (sparks.active_vector_norm || 0).toFixed(3);
+            document.getElementById('spark-fired-total').textContent =
+                sparks.total_fired || 0;
+            const sparkEl = document.getElementById('spark-log');
+            const recent = sparks.recent || [];
+            if (recent.length === 0) {
+                sparkEl.innerHTML = '<span style="color:#adb5bd">(no sparks yet)</span>';
+            } else {
+                sparkEl.innerHTML = '';
+                recent.slice().reverse().forEach(sp => {
+                    const line = document.createElement('div');
+                    const text = escapeHtml((sp.text || '').slice(0, 40));
+                    line.innerHTML = '<span style="color:#f59f00;font-weight:600">['
+                                   + (sp.step || 0) + ']</span> ✦ '
+                                   + '<span style="color:#343a40">' + text + '</span>';
+                    sparkEl.appendChild(line);
+                });
+            }
+
+            // Latent drift projections — per-emotion signed projection
+            const drift = (s.drift_last && s.drift_last.per_emotion_projections) || {};
+            renderBars('drift-projections', drift, 1.0);
 
             const log = document.getElementById('idle-event-log');
             const events = s.idle_events || [];
@@ -623,16 +692,22 @@
                     if (ev.type === 'recall') {
                         detail = 'remembered: ' + escapeHtml((ev.text || '').slice(0, 60));
                     } else if (ev.type === 'speculation') {
-                        detail = 'speculated (resonance ' + (ev.resonance || 0).toFixed(3)
-                                 + ', rounds ' + (ev.rounds || 0) + ')';
+                        const tip = ev.decoded_tip ? ' → "' + escapeHtml(ev.decoded_tip.slice(0, 50)) + '"' : '';
+                        detail = 'speculated (depth ' + (ev.depth || 0)
+                                 + ', resonance ' + (ev.best_resonance || ev.resonance || 0).toFixed(3)
+                                 + ')' + tip;
                     } else if (ev.type === 'drift') {
-                        detail = 'drift: ' + ev.emotion + ' ' + (ev.delta > 0 ? '+' : '')
-                                 + (ev.delta || 0).toFixed(3);
+                        const val = ev.projection !== undefined ? ev.projection : ev.delta;
+                        detail = 'drift: ' + ev.emotion + ' ' + ((val || 0) > 0 ? '+' : '')
+                                 + (val || 0).toFixed(3);
+                    } else if (ev.type === 'spark') {
+                        detail = 'spark: "' + escapeHtml((ev.text || '').slice(0, 40)) + '"';
                     } else {
                         detail = ev.type;
                     }
                     const color = ev.type === 'recall' ? '#5c7cfa'
                                 : ev.type === 'speculation' ? '#9775fa'
+                                : ev.type === 'spark' ? '#f59f00'
                                 : '#adb5bd';
                     line.innerHTML = '<span style="color:' + color + ';font-weight:600">['
                                    + (ev.step || 0) + ']</span> ' + detail;
@@ -709,11 +784,19 @@
                     body: JSON.stringify({ message: msg }),
                 });
                 const data = await resp.json();
-
-                addMessage('raw-messages', 'assistant', data.raw_response);
-                addMessage('engine-messages', 'assistant', data.engine_response);
-                updateDashboard(data.engine_state);
+                if (!resp.ok) {
+                    const errMsg = '[Error ' + resp.status + ': ' + (data.error || 'unknown') + ']';
+                    console.error('[compare ' + resp.status + ']', data.error);
+                    if (data.traceback) console.error(data.traceback);
+                    addMessage('raw-messages', 'assistant', errMsg);
+                    addMessage('engine-messages', 'assistant', errMsg);
+                } else {
+                    addMessage('raw-messages', 'assistant', data.raw_response);
+                    addMessage('engine-messages', 'assistant', data.engine_response);
+                    updateDashboard(data.engine_state);
+                }
             } catch (err) {
+                console.error('[sendMessage]', err);
                 addMessage('raw-messages', 'assistant', '[Error: ' + err.message + ']');
                 addMessage('engine-messages', 'assistant', '[Error: ' + err.message + ']');
             }
@@ -760,18 +843,34 @@
         // ── Live polling ──
         async function pollStatus() {
             try {
-                const s = await fetch('/api/status').then(r => r.json());
+                const r = await fetch('/api/status');
+                const s = await r.json();
+                if (!r.ok) {
+                    console.error('[status '+r.status+']', s.error);
+                    if (s.traceback) console.error(s.traceback);
+                    return;
+                }
                 updateDashboard(s);
-            } catch (e) {}
+            } catch (e) {
+                console.error('[pollStatus]', e);
+            }
         }
 
         async function pollAutonomous() {
             try {
-                const data = await fetch('/api/autonomous').then(r => r.json());
+                const r = await fetch('/api/autonomous');
+                const data = await r.json();
+                if (!r.ok) {
+                    console.error('[autonomous '+r.status+']', data.error);
+                    if (data.traceback) console.error(data.traceback);
+                    return;
+                }
                 (data.messages || []).forEach(m => {
-                    addMessage('engine-messages', 'self', m.message, true);
+                    addMessage('engine-messages', 'self', m.message, true, m.latent_seeded);
                 });
-            } catch (e) {}
+            } catch (e) {
+                console.error('[pollAutonomous]', e);
+            }
         }
 
         // Poll every 2 seconds for live updates

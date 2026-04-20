@@ -339,10 +339,28 @@ class EngineConfig:
     idle_recall_probability: float = 0.08       # chance of spontaneous memory recall per tick
     idle_recall_coloring_strength: float = 0.5  # strength of reactivated emotions on recall
 
-    # Speculative subconscious — daydreaming cadence and depth
-    speculative_rounds: int = 3                 # candidate thoughts tried per speculation
-    speculative_horizon_tokens: int = 2         # forward-pass tokens per candidate
+    # Speculative subconscious — multilayered tree search daydreaming.
+    # The root level tries `speculative_rounds` candidates; each survivor then
+    # branches `speculative_branch_factor` times, pruned to `speculative_beam_width`
+    # at every depth. Deeper trees explore further futures at higher cost.
+    speculative_rounds: int = 3                 # candidates at the root depth
+    speculative_horizon_tokens: int = 4         # forward-pass tokens per candidate
     speculative_cadence_ticks: int = 20         # run speculation every N idle ticks
+    speculative_tree_depth: int = 3             # layers of speculation
+    speculative_branch_factor: int = 2          # children per surviving node (depth > 0)
+    speculative_beam_width: int = 2             # survivors per layer
+    speculative_spark_mix_probability: float = 0.3  # fraction of candidates seeded with a spark
+    speculative_novelty_weight: float = 0.3     # trajectory scoring: novelty vs goal alignment
+
+    # Knowledge Sparks — spontaneous activation of a concept drawn from the
+    # model's OWN vocabulary embedding matrix. The embedding matrix is the
+    # model's semantic atlas, so sampling from it gives genuine model-native
+    # intrusive thoughts rather than authored stimuli.
+    knowledge_spark_probability: float = 0.04      # ~1 spark every 25 ticks
+    knowledge_spark_strength: float = 0.8          # initial vector magnitude (direction-normalized)
+    knowledge_spark_decay: float = 0.85            # per-tick fade of the active spark vector
+    knowledge_spark_steering_weight: float = 0.7   # weight of spark term in steering blend
+    knowledge_spark_candidate_pool: int = 64       # tokens considered per spark sample
 
     # Generation
     default_max_tokens: int = 150

@@ -12,9 +12,20 @@ Usage:
 import argparse
 import threading
 import time
+import traceback
 
 import torch
 from flask import Flask, jsonify, render_template, request
+
+
+def _json_error(exc: Exception):
+    """Return a JSON 500 with the full traceback so the browser (or a curl
+    user) can see what actually failed, instead of the opaque HTML Flask
+    default that the dashboard's fetch+json() cannot parse."""
+    tb = traceback.format_exc()
+    msg = f"{type(exc).__name__}: {exc}"
+    print(f"  [API ERROR] {msg}\n{tb}", flush=True)
+    return jsonify({"error": msg, "traceback": tb}), 500
 
 from magnum_opus import MagnumOpusEngine, load_model, extract_vectors, load_profile
 from magnum_opus.profile import profile_exists
@@ -35,91 +46,109 @@ def index():
 @app.route("/api/compare", methods=["POST"])
 def compare():
     """Send the same input to both raw model and engine, return both responses."""
-    data = request.json
-    user_input = data.get("message", "").strip()
-    if not user_input:
-        return jsonify({"error": "Empty message"}), 400
+    try:
+        data = request.json
+        user_input = data.get("message", "").strip()
+        if not user_input:
+            return jsonify({"error": "Empty message"}), 400
 
-    max_tokens = data.get("max_tokens", 100)
+        max_tokens = data.get("max_tokens", 100)
 
-    # Build prompt with conversation context (last 3 turns for both)
-    def build_prompt(history, msg):
-        lines = []
-        for turn in history[-3:]:
-            lines.append(f"User: {turn['user']}")
-            lines.append(f"Assistant: {turn['assistant']}")
-        lines.append(f"User: {msg}")
-        lines.append("Assistant:")
-        return "\n".join(lines)
+        # Build prompt with conversation context (last 3 turns for both)
+        def build_prompt(history, msg):
+            lines = []
+            for turn in history[-3:]:
+                lines.append(f"User: {turn['user']}")
+                lines.append(f"Assistant: {turn['assistant']}")
+            lines.append(f"User: {msg}")
+            lines.append("Assistant:")
+            return "\n".join(lines)
 
-    raw_prompt = build_prompt(raw_history, user_input)
+        raw_prompt = build_prompt(raw_history, user_input)
 
-    # Raw generation (no steering, no state changes)
-    torch.manual_seed(int(time.time()) % 10000)
-    raw_text = engine.generate_without_steering(raw_prompt, max_tokens=max_tokens)
-    if "Assistant:" in raw_text:
-        raw_response = raw_text.split("Assistant:")[-1].strip()
-    else:
-        raw_response = raw_text[len(raw_prompt):].strip()
+        # Raw generation (no steering, no state changes)
+        torch.manual_seed(int(time.time()) % 10000)
+        raw_text = engine.generate_without_steering(raw_prompt, max_tokens=max_tokens)
+        if "Assistant:" in raw_text:
+            raw_response = raw_text.split("Assistant:")[-1].strip()
+        else:
+            raw_response = raw_text[len(raw_prompt):].strip()
 
-    # Engine generation (full steering)
-    torch.manual_seed(int(time.time()) % 10000)
-    engine_response = engine.converse(user_input, max_tokens=max_tokens)
+        # Engine generation (full steering)
+        torch.manual_seed(int(time.time()) % 10000)
+        engine_response = engine.converse(user_input, max_tokens=max_tokens)
 
-    # Track histories
-    raw_history.append({"user": user_input, "assistant": raw_response})
-    engine_history.append({"user": user_input, "assistant": engine_response})
+        # Track histories
+        raw_history.append({"user": user_input, "assistant": raw_response})
+        engine_history.append({"user": user_input, "assistant": engine_response})
 
-    # Return full engine state
-    return jsonify({
-        "raw_response": raw_response,
-        "engine_response": engine_response,
-        "engine_state": engine.status(),
-        "turn": len(engine_history),
-    })
+        # Return full engine state
+        return jsonify({
+            "raw_response": raw_response,
+            "engine_response": engine_response,
+            "engine_state": engine.status(),
+            "turn": len(engine_history),
+        })
+    except Exception as e:
+        return _json_error(e)
 
 
 @app.route("/api/status")
 def status():
     """Get full engine state for live dashboard updates."""
-    s = engine.status()
-    s["turn"] = len(engine_history)
-    return jsonify(s)
+    try:
+        s = engine.status()
+        s["turn"] = len(engine_history)
+        return jsonify(s)
+    except Exception as e:
+        return _json_error(e)
 
 
 @app.route("/api/autonomous")
 def get_autonomous():
     """Drain queued autonomous messages for the UI."""
-    msgs = engine.get_autonomous_messages()
-    return jsonify({"messages": msgs})
+    try:
+        msgs = engine.get_autonomous_messages()
+        return jsonify({"messages": msgs})
+    except Exception as e:
+        return _json_error(e)
 
 
 @app.route("/api/dream", methods=["POST"])
 def dream():
     """Trigger a dream cycle."""
-    engine.dream(verbose=False)
-    return jsonify({"status": "complete", "cycle": engine.status()["dream_cycles"]})
+    try:
+        engine.dream(verbose=False)
+        return jsonify({"status": "complete", "cycle": engine.status()["dream_cycles"]})
+    except Exception as e:
+        return _json_error(e)
 
 
 @app.route("/api/reset", methods=["POST"])
 def reset():
     """Reset engine and conversation histories."""
     global raw_history, engine_history
-    engine.reset()
-    raw_history = []
-    engine_history = []
-    return jsonify({"status": "reset"})
+    try:
+        engine.reset()
+        raw_history = []
+        engine_history = []
+        return jsonify({"status": "reset"})
+    except Exception as e:
+        return _json_error(e)
 
 
 @app.route("/api/export")
 def export():
     """Export full conversation data as JSON."""
-    return jsonify({
-        "raw_history": raw_history,
-        "engine_history": engine_history,
-        "engine_status": engine.status(),
-        "timestamp": time.time(),
-    })
+    try:
+        return jsonify({
+            "raw_history": raw_history,
+            "engine_history": engine_history,
+            "engine_status": engine.status(),
+            "timestamp": time.time(),
+        })
+    except Exception as e:
+        return _json_error(e)
 
 
 def heartbeat_loop():
@@ -133,8 +162,8 @@ def heartbeat_loop():
             engine.tick()
             if engine.check_autonomous_urge():
                 engine.speak_autonomously()
-        except Exception as e:
-            print(f"  [Heartbeat] {e}")
+        except Exception:
+            print("  [Heartbeat ERROR]\n" + traceback.format_exc(), flush=True)
 
 
 def main():

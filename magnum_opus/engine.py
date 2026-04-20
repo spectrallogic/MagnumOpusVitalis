@@ -21,7 +21,7 @@ from magnum_opus.components import (
     InternalTimeSignals,
     MultiSpeedEmotionalState, TemporalEngine, ResidualSteering, ThoughtResidual,
     SubconsciousEngine, MemorySystem, DreamCycle, GrowthManager,
-    AlignmentMonitor, CommunicativeDrive,
+    AlignmentMonitor, CommunicativeDrive, KnowledgeSparks,
 )
 
 
@@ -219,10 +219,18 @@ class MagnumOpusEngine:
 
         self.target_layer = target_layer if target_layer is not None else n_layers // 2
 
+        # Derive the emotion interaction matrix from the cosine geometry of the
+        # extracted vectors themselves. The frozen model's own semantics decide
+        # which feelings amplify or suppress each other — not an authored list.
+        self._derived_interactions = self._derive_emotion_interactions(emotion_vectors)
+
         # Initialize all subsystems
         temporal_vecs = {k: v for k, v in emotion_vectors.items() if k.startswith("temporal_")}
 
-        self.emotional_state = MultiSpeedEmotionalState(list(emotion_vectors.keys()))
+        self.emotional_state = MultiSpeedEmotionalState(
+            list(emotion_vectors.keys()),
+            interactions=self._derived_interactions,
+        )
         self.temporal = TemporalEngine(temporal_vecs, self.config)
         self.residual = ResidualSteering(
             self.hidden_dim, self.config.residual_decay, self.config.residual_max_norm,
@@ -248,6 +256,23 @@ class MagnumOpusEngine:
         # Steering hook
         self.hook = SteeringHook().attach(model, self.target_layer)
 
+        # Knowledge Sparks — periodic intrusive thoughts sampled from the
+        # model's own vocabulary embedding matrix. Wired after the hook so
+        # sparks that trigger forward passes flow through steering cleanly.
+        self.knowledge_sparks = KnowledgeSparks(
+            model, tokenizer, self.hidden_dim,
+            spark_strength=self.config.knowledge_spark_strength,
+            candidate_pool=self.config.knowledge_spark_candidate_pool,
+        )
+        self.active_spark_vector = torch.zeros(self.hidden_dim, device="cpu")
+        self.last_spark_event: Optional[Dict[str, Any]] = None
+
+        # Telemetry for the UI — last speculation tree summary, last drift projections
+        self.last_speculation_summary: Dict[str, Any] = {
+            "depth": 0, "beam": 0, "best_resonance": 0.0, "decoded_tips": [],
+        }
+        self.last_drift_projections: Dict[str, float] = {}
+
         # State
         self.step_count = 0
         self.conversation_history: List[Dict[str, str]] = []
@@ -266,6 +291,113 @@ class MagnumOpusEngine:
 
         # Idle tracking for auto-dream (wall clock OK — this is scheduling, not perception)
         self._last_activity = time.time()
+
+    # ───────────────────────────────────────────────────────────────────
+    # LATENT DERIVATION HELPERS
+    # Quantities computed from the model's own vector geometry,
+    # replacing the hand-authored formulas of earlier revisions.
+    # ───────────────────────────────────────────────────────────────────
+
+    def _derive_emotion_interactions(
+        self, emotion_vectors: Dict[str, torch.Tensor],
+    ) -> Dict[Tuple[str, str], float]:
+        """Build an interaction matrix from the cosine geometry of the
+        extracted emotion vectors. Aligned vectors amplify; opposed suppress;
+        near-orthogonal do nothing. A 0.1 dead-zone avoids noise dominating."""
+        interactions: Dict[Tuple[str, str], float] = {}
+        names = [n for n in emotion_vectors if not n.startswith("temporal_")]
+        for a in names:
+            va = emotion_vectors[a].cpu().float()
+            na = va.norm()
+            for b in names:
+                if a == b:
+                    continue
+                vb = emotion_vectors[b].cpu().float()
+                nb = vb.norm()
+                if na < 1e-6 or nb < 1e-6:
+                    sim = 0.0
+                else:
+                    sim = F.cosine_similarity(va.unsqueeze(0), vb.unsqueeze(0)).item()
+                if abs(sim) < 0.1:
+                    interactions[(a, b)] = 0.0
+                else:
+                    # Scale [-1, 1] → [-0.5, 0.5]
+                    interactions[(a, b)] = float(sim * 0.5)
+        return interactions
+
+    def _emotion_blend_vector(self) -> torch.Tensor:
+        """Weighted sum of emotion vectors, weighted by the current blended
+        emotional state. Used as a bias direction for knowledge-spark sampling
+        and for spark-seeded speculation candidates."""
+        blended = self.emotional_state.get_blended()
+        out = torch.zeros(self.hidden_dim)
+        for emotion, w in blended.items():
+            if emotion in self.emotion_vectors and abs(w) > 1e-4:
+                out = out + float(w) * self.emotion_vectors[emotion].cpu().float()
+        return out
+
+    def _arousal_from_emotions(self) -> float:
+        """Mean absolute magnitude of the blended emotional state, clipped to
+        [0, 1]. Modulates sampling temperature for self-started speech."""
+        blended = self.emotional_state.get_blended()
+        if not blended:
+            return 0.0
+        mag = sum(abs(float(v)) for v in blended.values()) / max(len(blended), 1)
+        return float(min(1.0, mag))
+
+    def _latent_seeded_generate(self, max_tokens: Optional[int] = None) -> str:
+        """Self-start a generation with no scripted prefix. Runs a single
+        forward pass on the BOS token with full steering active, samples the
+        first token from that distribution at a temperature modulated by
+        emotional arousal, then continues generation with steering still on.
+
+        The opening token is chosen by the model-under-steering itself, not
+        by a lookup table — the inner monologue begins wherever the current
+        soul-state wants it to begin."""
+        max_tokens = max_tokens or self.config.default_max_tokens
+        bos = (self.tokenizer.bos_token_id
+               or self.tokenizer.eos_token_id
+               or 0)
+        seed_ids = torch.tensor([[bos]], device=self.device)
+
+        steering = self.compute_steering_vector()
+        self.hook.clear()
+        self.hook.set_steering(steering)
+
+        try:
+            with torch.no_grad():
+                fwd = self.model(seed_ids)
+                logits = fwd.logits[0, -1, :].float()
+
+            arousal = self._arousal_from_emotions()
+            temp = 0.7 + arousal * 0.6  # 0.7 .. 1.3
+            probs = F.softmax(logits / max(temp, 1e-3), dim=-1)
+            k = min(20, probs.numel())
+            top_probs, top_idx = probs.topk(k)
+            top_probs = top_probs / top_probs.sum().clamp(min=1e-8)
+            choice = int(torch.multinomial(top_probs, 1).item())
+            first_id = int(top_idx[choice].item())
+
+            prefix = torch.cat(
+                [seed_ids, torch.tensor([[first_id]], device=self.device)], dim=1,
+            )
+
+            with torch.no_grad():
+                gen = self.model.generate(
+                    prefix,
+                    max_new_tokens=max_tokens,
+                    do_sample=True,
+                    temperature=self.config.default_temperature,
+                    top_p=self.config.default_top_p,
+                    repetition_penalty=self.config.repetition_penalty,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+            full_ids = gen[0, seed_ids.shape[1]:]
+            text = self.tokenizer.decode(full_ids, skip_special_tokens=True)
+        finally:
+            self.hook.set_steering(None)
+
+        return text.strip()
 
     # ───────────────────────────────────────────────────────────────────
     # INTERNAL TIME PERCEPTION
@@ -313,15 +445,21 @@ class MagnumOpusEngine:
         #    This is how the engine feels its own history carrying forward.
         thought_vec = self.thought_residual.get()
 
-        # 5. Combine
+        # 5. Active knowledge spark — a recently-fired intrusive concept,
+        #    direction-normalized, fading each tick. Gives the steering blend a
+        #    vocabulary-anchored flavor for as long as the spark survives.
+        spark_vec = self.active_spark_vector.cpu().float()
+
+        # 6. Combine
         combined = (
             emo_vec * self.config.steering_strength
             + temporal_vec * 1.0
             + sub_vec * 0.5
             + thought_vec * self.config.thought_residual_strength
+            + spark_vec * self.config.knowledge_spark_steering_weight
         )
 
-        # 6. Residual (temporal continuity of our own steering commands)
+        # 7. Residual (temporal continuity of our own steering commands)
         steered = self.residual.step(combined)
 
         return steered.to(self.device)
@@ -481,31 +619,27 @@ class MagnumOpusEngine:
 
     def speak_autonomously(self) -> Optional[str]:
         """
-        Generate a message from the system's own internal state.
-        Called when communicative pressure exceeds the threshold.
+        Generate a message from the system's own internal state. No scripted
+        seed phrases: the engine samples its own first token from the BOS
+        distribution under current steering, then continues from there. The
+        opening words are whatever the model-under-soul actually wanted to say.
         """
         with self._lock:
             blended = self.emotional_state.get_blended()
 
-            # Get thought seed based on internal state
-            seed = self.communicative_drive.get_thought_seed(
-                blended, self.subconscious.goal_vector
-            )
-
             # Step the engine (autonomous activity, not a user interaction)
             self._step(dt=0.5, is_interaction=False)
 
-            # Generate from the thought seed with full steering
-            prompt = f"Assistant: {seed}"
-            text, states = self._generate(prompt, max_tokens=80)
-            self._post_generation(seed, text, states)
+            # Latent-seeded generation — no THOUGHT_SEEDS, no English template.
+            response = self._latent_seeded_generate(max_tokens=80)
 
-            # Extract response
-            if seed in text:
-                response = text.split(seed)[-1].strip()
-                response = seed + " " + response
-            else:
-                response = seed + " " + text[len(prompt):].strip()
+            # Run post-generation processing against the captured states from
+            # the continuation pass. The captured_states belong to the last
+            # forward pass, so they still reflect what the model felt while
+            # producing this autonomous utterance.
+            if self.hook.captured_states:
+                states = list(self.hook.captured_states)
+                self._post_generation("[autonomous]", response, states)
 
             # Mark that the system spoke
             self.communicative_drive.spoke(current_residual_norm=self.residual.norm())
@@ -517,6 +651,7 @@ class MagnumOpusEngine:
                 "timestamp": time.time(),
                 "emotional_state": blended,
                 "autonomous": True,
+                "latent_seeded": True,
             })
 
             # Queue for dashboard
@@ -525,6 +660,7 @@ class MagnumOpusEngine:
                 "timestamp": time.time(),
                 "emotional_state": blended,
                 "pressure_at_trigger": self.communicative_drive.pressure,
+                "latent_seeded": True,
             })
 
             return response
@@ -551,12 +687,27 @@ class MagnumOpusEngine:
             # Thought residual (echo of past model state) slowly fades
             self.thought_residual.step_decay()
 
+            # Knowledge sparks — intrusive thoughts sampled from the model's
+            # own vocabulary. Emotional blend biases which concepts surface.
+            if random.random() < self.config.knowledge_spark_probability:
+                bias = self._emotion_blend_vector()
+                result = self.knowledge_sparks.fire(bias, step=self.step_count)
+                self.active_spark_vector = result["vector"]
+                self.last_spark_event = result["event"]
+                self.idle_events.append(result["event"])
+            # Decay the active spark vector each tick — a spark fades into
+            # the background rather than being cut off abruptly.
+            self.active_spark_vector = (
+                self.active_spark_vector * self.config.knowledge_spark_decay
+            )
+
             # Communicative drive (pressure to speak autonomously)
             self.communicative_drive.tick(
                 emotional_state=blended,
                 subconscious_goal_strength=self.subconscious.goal_strength,
                 residual_norm=self.residual.norm(),
                 dt=0.5,
+                residual_vec=self.residual.residual,
             )
 
             # Temporal perception ticks forward
@@ -578,24 +729,70 @@ class MagnumOpusEngine:
     # ───────────────────────────────────────────────────────────────────
 
     def _apply_idle_drift(self):
-        """Small random perturbation per emotion per tick — background hum.
-        Without this, emotions settle into baseline and freeze. With it,
-        the inner life keeps moving whether or not a user is present."""
+        """Latent-native idle drift. Runs a silent one-token forward pass with
+        the current steering active, takes the model's hidden-state response
+        relative to the accumulated thought residual, and projects that delta
+        onto each emotion vector. The projections become drift signals — the
+        emotional state moves in whatever direction the model actually gravitates
+        under its current soul, not uniform noise. Falls back to no-op if the
+        forward pass produces nothing."""
         amp = self.config.idle_drift_amplitude
         if amp <= 0:
             return
-        for emotion in list(self.emotional_state.fast.keys()):
-            delta = (random.random() - 0.5) * 2 * amp
-            self.emotional_state.stimulate(emotion, delta)
-            if abs(delta) > amp * 0.9 and len(self.emotional_state.fast) > 0:
-                # Only log the most noticeable drifts to avoid spam
-                if random.random() < 0.02:
-                    self.idle_events.append({
-                        "type": "drift",
-                        "emotion": emotion,
-                        "delta": round(float(delta), 4),
-                        "step": self.step_count,
-                    })
+        try:
+            bos = (self.tokenizer.bos_token_id
+                   or self.tokenizer.eos_token_id
+                   or 0)
+            seed = torch.tensor([[bos]], device=self.device)
+            self.hook.clear()
+            self.hook.set_steering(self.compute_steering_vector())
+            with torch.no_grad():
+                _ = self.model(seed)
+        except Exception:
+            self.hook.set_steering(None)
+            self.last_drift_projections = {}
+            return
+        finally:
+            self.hook.set_steering(None)
+
+        if not self.hook.captured_states:
+            self.last_drift_projections = {}
+            return
+
+        state = self.hook.captured_states[-1].mean(dim=(0, 1)).detach().cpu().float()
+        prev = self.thought_residual.get().detach().cpu().float()
+        delta = state - prev if prev.norm() > 1e-6 else state
+        if delta.norm() < 1e-6:
+            self.last_drift_projections = {}
+            return
+        delta = delta / delta.norm()
+
+        projections: Dict[str, float] = {}
+        for emo, vec in self.emotion_vectors.items():
+            if emo.startswith("temporal_"):
+                continue
+            v = vec.cpu().float()
+            if v.norm() < 1e-6:
+                continue
+            proj = F.cosine_similarity(delta.unsqueeze(0), v.unsqueeze(0)).item()
+            projections[emo] = float(proj)
+            self.emotional_state.stimulate(emo, proj * amp)
+
+        self.last_drift_projections = {
+            k: round(v, 4) for k, v in projections.items()
+        }
+
+        # Log a drift event occasionally when the model's response is strongly
+        # directional — the most "alive" drift moments, worth surfacing in UI.
+        if projections:
+            peak_emo, peak_val = max(projections.items(), key=lambda kv: abs(kv[1]))
+            if abs(peak_val) > 0.3 and random.random() < 0.1:
+                self.idle_events.append({
+                    "type": "drift",
+                    "emotion": peak_emo,
+                    "projection": round(peak_val, 4),
+                    "step": self.step_count,
+                })
 
     def _maybe_spontaneous_recall(self):
         """Probabilistic re-experience of a past memory during idle.
@@ -638,77 +835,159 @@ class MagnumOpusEngine:
             "step": self.step_count,
         })
 
+    def _sample_speculation_candidate(self, parent_vec: torch.Tensor
+                                      ) -> torch.Tensor:
+        """Build a candidate steering vector for one branch of the speculation
+        tree. Mixes the parent's direction, a perturbed emotional blend, a
+        goal pull, and — with probability `speculative_spark_mix_probability` —
+        a knowledge-spark embedding so the subconscious can chase genuine
+        vocabulary-anchored concepts, not only emotion noise."""
+        cand = parent_vec.detach().cpu().float().clone()
+        blended = self.emotional_state.get_blended()
+        for emo, w in blended.items():
+            if emo in self.emotion_vectors:
+                perturbed = w + (random.random() - 0.5) * 0.3
+                cand = cand + perturbed * self.emotion_vectors[emo].cpu().float()
+        if self.subconscious.goal_vector_nonzero():
+            cand = cand + 0.4 * self.subconscious.goal_vector.detach().cpu().float()
+        if random.random() < self.config.speculative_spark_mix_probability:
+            _, spark_vec = self.knowledge_sparks.sample_spark(
+                emotional_bias=self._emotion_blend_vector(),
+            )
+            cand = cand + 0.5 * spark_vec.detach().cpu().float()
+        return cand
+
+    def _score_trajectory(self, final_state: torch.Tensor) -> float:
+        """Latent resonance: goal alignment plus a novelty bonus measured as
+        cosine distance from the current thought residual. The engine is
+        rewarded for finding paths toward the goal but also for exploring
+        directions it has not recently occupied."""
+        goal = self.subconscious.goal_vector
+        if goal is None:
+            goal_align = 0.0
+        else:
+            g = goal.detach().cpu().float()
+            if g.norm() < 1e-6 or final_state.norm() < 1e-6:
+                goal_align = 0.0
+            else:
+                goal_align = F.cosine_similarity(
+                    final_state.unsqueeze(0), g.unsqueeze(0),
+                ).item()
+        tr = self.thought_residual.get().detach().cpu().float()
+        if tr.norm() > 1e-6 and final_state.norm() > 1e-6:
+            novelty = 1.0 - F.cosine_similarity(
+                final_state.unsqueeze(0), tr.unsqueeze(0),
+            ).item()
+        else:
+            novelty = 0.0
+        return float(goal_align + self.config.speculative_novelty_weight * novelty)
+
     def _speculate(self):
-        """Engine's internal daydreaming — actually tries candidate thoughts
-        via short speculative forward passes, and adopts whichever resonates
-        best with the current goal as the new subconscious direction."""
+        """Tree-search speculation. At each depth, surviving nodes spawn new
+        branches whose steering vectors can include knowledge sparks. Each
+        branch is scored by cumulative resonance (goal alignment + novelty),
+        and only the top `speculative_beam_width` survive to the next depth.
+        The best trajectory's final direction is adopted as the subconscious
+        goal nudge; each step along the winning path imprints onto thought
+        residual with depth-decayed strength."""
         if not self.subconscious.goal_vector_nonzero():
             return
 
         rounds = max(1, int(self.config.speculative_rounds))
         horizon = max(1, int(self.config.speculative_horizon_tokens))
+        depth = max(1, int(self.config.speculative_tree_depth))
+        branch = max(1, int(self.config.speculative_branch_factor))
+        beam = max(1, int(self.config.speculative_beam_width))
 
         try:
-            seed_ids = self.tokenizer.encode("...", return_tensors="pt").to(self.device)
+            seed_ids = self.tokenizer.encode(".", return_tensors="pt").to(self.device)
         except Exception:
             return
 
-        blended = self.emotional_state.get_blended()
-        goal_on_cpu = self.subconscious.goal_vector.detach().cpu().float()
-        goal_norm = goal_on_cpu.norm()
-        if goal_norm < 1e-6:
+        frontier: List[Dict[str, Any]] = [{
+            "cumulative": 0.0,
+            "parent_vec": torch.zeros(self.hidden_dim),
+            "prefix_ids": seed_ids,
+            "trajectory_states": [],
+            "decoded_tail": "",
+        }]
+
+        for d in range(depth):
+            next_frontier: List[Dict[str, Any]] = []
+            children_per_node = rounds if d == 0 else branch
+            for node in frontier:
+                for _ in range(children_per_node):
+                    cand = self._sample_speculation_candidate(node["parent_vec"])
+                    self.hook.clear()
+                    try:
+                        self.hook.set_steering(cand.to(self.device))
+                        with torch.no_grad():
+                            out = self.model.generate(
+                                node["prefix_ids"],
+                                max_new_tokens=horizon,
+                                do_sample=True,
+                                temperature=1.0,
+                                top_p=self.config.default_top_p,
+                                pad_token_id=self.tokenizer.eos_token_id,
+                            )
+                    except Exception:
+                        self.hook.set_steering(None)
+                        continue
+                    self.hook.set_steering(None)
+
+                    if not self.hook.captured_states:
+                        continue
+                    final = self.hook.captured_states[-1].mean(
+                        dim=(0, 1),
+                    ).detach().cpu().float()
+                    if final.norm() < 1e-6:
+                        continue
+                    score = self._score_trajectory(final)
+                    # Decode just the new tail for a human-readable UI preview
+                    try:
+                        new_tail = self.tokenizer.decode(
+                            out[0, node["prefix_ids"].shape[1]:],
+                            skip_special_tokens=True,
+                        ).strip()
+                    except Exception:
+                        new_tail = ""
+                    next_frontier.append({
+                        "cumulative": node["cumulative"] + score,
+                        "parent_vec": cand,
+                        "prefix_ids": out,
+                        "trajectory_states": node["trajectory_states"] + [final],
+                        "decoded_tail": (node["decoded_tail"] + " " + new_tail).strip(),
+                    })
+            if not next_frontier:
+                return
+            next_frontier.sort(key=lambda n: n["cumulative"], reverse=True)
+            frontier = next_frontier[:beam]
+
+        if not frontier:
             return
+        best = frontier[0]
+        best_resonance = best["cumulative"] / max(1, depth)
+        self.subconscious.adopt_speculation(best["parent_vec"], best_resonance)
+        # Imprint the whole trajectory with depth-decayed strength — the near
+        # future feels more real than the far future.
+        for i, state in enumerate(best["trajectory_states"]):
+            fade = 0.5 ** i
+            self.thought_residual.imprint(state * 0.5 * fade)
 
-        candidates: List[Tuple[float, torch.Tensor, torch.Tensor]] = []
-        for _ in range(rounds):
-            cand = torch.zeros(self.hidden_dim)
-            for emo, w in blended.items():
-                if emo in self.emotion_vectors:
-                    perturbed = w + (random.random() - 0.5) * 0.3
-                    cand = cand + perturbed * self.emotion_vectors[emo].cpu().float()
-            cand = cand + 0.5 * goal_on_cpu
-
-            # Run a short speculative forward pass with this candidate
-            self.hook.clear()
-            try:
-                self.hook.set_steering(cand.to(self.device))
-                with torch.no_grad():
-                    self.model.generate(
-                        seed_ids,
-                        max_new_tokens=horizon,
-                        do_sample=False,
-                        pad_token_id=self.tokenizer.eos_token_id,
-                    )
-            except Exception:
-                self.hook.set_steering(None)
-                continue
-            self.hook.set_steering(None)
-
-            if not self.hook.captured_states:
-                continue
-            last = self.hook.captured_states[-1]
-            final = last.mean(dim=(0, 1)).detach().cpu().float()
-            final_norm = final.norm()
-            if final_norm < 1e-6:
-                continue
-            resonance = F.cosine_similarity(
-                final.unsqueeze(0), goal_on_cpu.unsqueeze(0),
-            ).item()
-            candidates.append((float(resonance), cand, final))
-
-        if not candidates:
-            return
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        best_resonance, best_vec, best_state = candidates[0]
-
-        self.subconscious.adopt_speculation(best_vec, best_resonance)
-        # Imagined thoughts imprint at half strength — they weren't really felt
-        self.thought_residual.imprint(best_state * 0.5)
-
+        decoded_tips = [n["decoded_tail"] for n in frontier[:beam]]
+        self.last_speculation_summary = {
+            "depth": depth,
+            "beam": beam,
+            "branches_explored": len(frontier) * max(1, branch),
+            "best_resonance": round(float(best_resonance), 4),
+            "decoded_tips": decoded_tips,
+            "step": self.step_count,
+        }
         self.idle_events.append({
             "type": "speculation",
-            "resonance": round(float(best_resonance), 4),
-            "rounds": len(candidates),
+            "depth": depth,
+            "best_resonance": round(float(best_resonance), 4),
+            "decoded_tip": decoded_tips[0] if decoded_tips else "",
             "step": self.step_count,
         })
 
@@ -860,6 +1139,17 @@ class MagnumOpusEngine:
             "growth": self.growth.status(),
             "alignment": self.alignment.status(),
             "communicative_drive": self.communicative_drive.status(),
+            "knowledge_sparks": {
+                **self.knowledge_sparks.status(),
+                "active_vector_norm": round(
+                    float(self.active_spark_vector.norm()), 4,
+                ),
+                "last_event": self.last_spark_event,
+            },
+            "speculation_last": self.last_speculation_summary,
+            "drift_last": {
+                "per_emotion_projections": self.last_drift_projections,
+            },
             "idle_events": list(self.idle_events),
             "conversation_turns": len(self.conversation_history),
             "dream_cycles": self._dream_cycle.cycle_count,
@@ -936,7 +1226,10 @@ class MagnumOpusEngine:
 
     def reset(self):
         """Full engine reset."""
-        self.emotional_state = MultiSpeedEmotionalState(list(self.emotion_vectors.keys()))
+        self.emotional_state = MultiSpeedEmotionalState(
+            list(self.emotion_vectors.keys()),
+            interactions=self._derived_interactions,
+        )
         self.temporal = TemporalEngine(
             {k: v for k, v in self.emotion_vectors.items() if k.startswith("temporal_")},
             self.config,
@@ -956,6 +1249,17 @@ class MagnumOpusEngine:
         self.growth = GrowthManager(self.config)
         self.alignment = AlignmentMonitor(self.emotion_vectors, self.config)
         self.communicative_drive = CommunicativeDrive(self.emotion_vectors, self.hidden_dim, self.device)
+        self.knowledge_sparks = KnowledgeSparks(
+            self.model, self.tokenizer, self.hidden_dim,
+            spark_strength=self.config.knowledge_spark_strength,
+            candidate_pool=self.config.knowledge_spark_candidate_pool,
+        )
+        self.active_spark_vector = torch.zeros(self.hidden_dim, device="cpu")
+        self.last_spark_event = None
+        self.last_speculation_summary = {
+            "depth": 0, "beam": 0, "best_resonance": 0.0, "decoded_tips": [],
+        }
+        self.last_drift_projections = {}
         self._dream_cycle = DreamCycle(
             self.model, self.tokenizer, self.memory, self.subconscious,
             self.emotional_state, self.emotion_vectors, self.target_layer,
@@ -964,3 +1268,4 @@ class MagnumOpusEngine:
         self.step_count = 0
         self.conversation_history = []
         self.autonomous_messages = []
+        self.idle_events.clear()

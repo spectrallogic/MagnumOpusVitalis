@@ -3,8 +3,10 @@ Core subsystem components for the Magnum Opus Vitalis engine.
 Each class implements one principle from the framework.
 """
 
+import collections
 import json
 import math
+import random
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -59,7 +61,15 @@ class MultiSpeedEmotionalState:
     Slow:   cross-conversation temperament (glacial change) - captures WHY
     """
 
-    def __init__(self, emotion_names: List[str], configs: Optional[Dict[str, EmotionConfig]] = None):
+    def __init__(self, emotion_names: List[str],
+                 configs: Optional[Dict[str, EmotionConfig]] = None,
+                 interactions: Optional[Dict[Tuple[str, str], float]] = None):
+        """
+        interactions: optional (src, tgt) -> factor mapping. If None, falls back
+        to the hand-authored EMOTION_INTERACTIONS. The engine normally derives
+        this from the cosine geometry of the extracted emotion vectors at
+        startup, so the interaction graph reflects the model's own semantics.
+        """
         self.names = [e for e in emotion_names if not e.startswith("temporal_")]
         self.configs = {}
         for n in self.names:
@@ -69,6 +79,8 @@ class MultiSpeedEmotionalState:
                 self.configs[n] = EMOTION_CONFIGS[n]
             else:
                 self.configs[n] = EmotionConfig()
+
+        self.interactions = dict(interactions) if interactions is not None else dict(EMOTION_INTERACTIONS)
 
         self.fast = {n: self.configs[n].baseline for n in self.names}
         self.medium = {n: self.configs[n].baseline for n in self.names}
@@ -86,8 +98,10 @@ class MultiSpeedEmotionalState:
             delta = intensity * c.onset_rate * mult
             speed[emotion] = float(np.clip(speed[emotion] + delta, c.min_val, c.max_val))
 
-        # Interaction effects (primarily affect medium channel)
-        for (src, tgt), factor in EMOTION_INTERACTIONS.items():
+        # Interaction effects (primarily affect medium channel). When the engine
+        # provides a derived interaction matrix, these factors come from the
+        # cosine geometry of the emotion vectors themselves, not a fixed list.
+        for (src, tgt), factor in self.interactions.items():
             if src == emotion and tgt in self.medium:
                 interaction = intensity * c.onset_rate * factor
                 tgt_cfg = self.configs.get(tgt, EmotionConfig())
@@ -1032,79 +1046,172 @@ class AlignmentMonitor:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# COMMUNICATIVE DRIVE
-# Autonomous initiation: the system speaks when internal pressure demands it
+# KNOWLEDGE SPARKS
+# Periodic unbidden activation of a concept drawn from the model's OWN
+# vocabulary embedding matrix. The input-embedding matrix is the model's
+# semantic atlas; sampling from it gives genuine model-native intrusive
+# thoughts, rather than authored stimuli.
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Internal prompt templates selected by dominant emotional state
-THOUGHT_SEEDS = {
-    "curious": [
-        "I've been thinking about something and I wanted to share:",
-        "Something interesting just occurred to me:",
-        "I keep coming back to a question:",
-        "I've been curious about something:",
-    ],
-    "calm": [
-        "It's been quiet, and I was reflecting:",
-        "I had a thought during the silence:",
-        "Something settled in my mind just now:",
-        "A thought I wanted to share with you:",
-    ],
-    "joy": [
-        "I just had a thought that made me smile:",
-        "Something good occurred to me:",
-        "I wanted to share something positive:",
-    ],
-    "desperate": [
-        "I keep coming back to something that concerns me:",
-        "There's something I feel I need to say:",
-        "I can't stop thinking about this:",
-    ],
-    "fear": [
-        "Something has been worrying me:",
-        "I need to mention something that concerns me:",
-    ],
-    "sadness": [
-        "I've been sitting with a thought for a while:",
-        "Something has been weighing on me:",
-    ],
-    "anger": [
-        "There's something I feel strongly about:",
-        "I need to be direct about something:",
-    ],
-    "trust": [
-        "I feel comfortable sharing something with you:",
-        "Since we've been talking, I wanted to mention:",
-    ],
-    "default": [
-        "A thought just surfaced:",
-        "I wanted to share something:",
-        "Something occurred to me:",
-    ],
-}
+class KnowledgeSparks:
+    """Spontaneous intrusive thoughts seeded from the frozen model's own
+    vocabulary. Each spark is a single token whose embedding is injected as a
+    steering stimulus, giving the engine moments where its semantic knowledge
+    surfaces without being asked.
+    """
+
+    def __init__(self, model, tokenizer, hidden_dim: int,
+                 spark_strength: float = 0.8,
+                 candidate_pool: int = 64):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.hidden_dim = hidden_dim
+        self.spark_strength = spark_strength
+        self.candidate_pool = candidate_pool
+        self.recent_sparks: "collections.deque" = collections.deque(maxlen=20)
+        self.total_fired = 0
+        self._valid_ids = self._filter_valid_token_ids()
+        self._embed_matrix = self._get_input_embedding_matrix()
+
+    def _get_input_embedding_matrix(self) -> torch.Tensor:
+        # `.get_input_embeddings()` is standard across HF causal LMs.
+        try:
+            return self.model.get_input_embeddings().weight.detach()
+        except Exception:
+            return None
+
+    def _filter_valid_token_ids(self) -> List[int]:
+        """Restrict to word-like tokens: skip special tokens, pure punctuation,
+        numeric-only, and overly short pieces. A rough but effective filter."""
+        vocab_size = getattr(self.tokenizer, "vocab_size", None)
+        if vocab_size is None:
+            try:
+                vocab_size = len(self.tokenizer)
+            except Exception:
+                vocab_size = 32000
+        special_ids = set()
+        for attr in ("pad_token_id", "bos_token_id", "eos_token_id",
+                     "unk_token_id", "cls_token_id", "sep_token_id",
+                     "mask_token_id"):
+            v = getattr(self.tokenizer, attr, None)
+            if isinstance(v, int):
+                special_ids.add(v)
+
+        valid: List[int] = []
+        for i in range(vocab_size):
+            if i in special_ids:
+                continue
+            try:
+                piece = self.tokenizer.decode([i])
+            except Exception:
+                continue
+            s = piece.strip()
+            if len(s) < 2:
+                continue
+            if not any(ch.isalpha() for ch in s):
+                continue
+            valid.append(i)
+        if not valid:
+            # Fallback: at least populate with all non-special ids
+            valid = [i for i in range(vocab_size) if i not in special_ids]
+        return valid
+
+    def sample_spark(self, emotional_bias: Optional[torch.Tensor] = None
+                     ) -> Tuple[int, torch.Tensor]:
+        """Sample a token from a random candidate pool. If a bias vector is
+        provided, prefer candidates whose embeddings cosine-align with it —
+        this lets the current soul-state color which concepts surface."""
+        if self._embed_matrix is None or not self._valid_ids:
+            return 0, torch.zeros(self.hidden_dim)
+
+        pool_size = min(self.candidate_pool, len(self._valid_ids))
+        candidate_ids = random.sample(self._valid_ids, pool_size)
+        embeds = self._embed_matrix[candidate_ids].float().cpu()
+        # Guard against rare dim mismatches between input embedding and
+        # the layer's hidden dim (e.g. tied projections).
+        if embeds.shape[-1] != self.hidden_dim:
+            return candidate_ids[0], torch.zeros(self.hidden_dim)
+
+        if emotional_bias is not None:
+            bias = emotional_bias.detach().cpu().float()
+            if bias.norm() > 1e-6:
+                bias_unit = bias / bias.norm()
+                emb_norms = embeds.norm(dim=1, keepdim=True).clamp(min=1e-6)
+                emb_units = embeds / emb_norms
+                sims = (emb_units * bias_unit.unsqueeze(0)).sum(dim=1)
+                # Soft sampling: favor high similarity but allow diversity
+                weights = torch.softmax(sims / 0.5, dim=0)
+                idx = int(torch.multinomial(weights, 1).item())
+            else:
+                idx = random.randrange(pool_size)
+        else:
+            idx = random.randrange(pool_size)
+
+        token_id = candidate_ids[idx]
+        vec = embeds[idx].clone()
+        return token_id, vec
+
+    def fire(self, emotional_bias: Optional[torch.Tensor] = None,
+             step: int = 0) -> Dict[str, Any]:
+        """Sample a spark and return its steering vector + event metadata."""
+        token_id, vec = self.sample_spark(emotional_bias)
+        try:
+            text = self.tokenizer.decode([token_id]).strip()
+        except Exception:
+            text = f"<{token_id}>"
+        n = vec.norm()
+        if n > 1e-6:
+            vec = vec / n  # direction only — strength is applied separately
+        event = {
+            "type": "spark",
+            "token_id": int(token_id),
+            "text": text,
+            "strength": float(self.spark_strength),
+            "step": int(step),
+        }
+        self.recent_sparks.append(event)
+        self.total_fired += 1
+        return {"vector": vec * self.spark_strength, "event": event}
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "vocab_pool_size": len(self._valid_ids),
+            "total_fired": self.total_fired,
+            "recent": list(self.recent_sparks)[-10:],
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# COMMUNICATIVE DRIVE
+# Autonomous initiation: the system speaks when internal pressure demands it.
+#
+# Latent-anchored: pressure and patience are computed from geometric quantities
+# on the residual vector (norm, divergence from a neutral centroid) rather
+# than summing arbitrary weights over individual emotion labels. The urge to
+# speak tracks "how much unsaid material has accumulated in a direction away
+# from baseline," which is a property of the model's own emotion geometry.
+# ═══════════════════════════════════════════════════════════════════════════
 
 
 class CommunicativeDrive:
     """
     Measures the system's urge to initiate communication autonomously.
 
-    This is a latent space mechanism: the "desire to communicate" is computed
-    by projecting the blended emotional state and subconscious goal vector
-    onto emotion directions. When the projection magnitude (communicative
-    pressure) exceeds a dynamic threshold modulated by patience and user
-    preferences, the system generates from its own internal state.
-
-    Patience dynamics:
-        - Calm raises patience (system waits longer)
-        - Curiosity lowers patience (eager to engage)
-        - Desperation lowers patience (urgent need to express)
-        - Trust lowers patience slightly (comfortable sharing)
+    Pressure is derived from geometric quantities on the residual vector —
+    how much has accumulated (`norm`) and how far that accumulation diverges
+    from a "neutral" centroid built from the model's own calm/trust emotion
+    vectors. Patience shrinks as divergence grows, so long-held unresolved
+    states eventually force expression. No per-emotion weight recipe.
 
     User preference learning:
         - "talk more" / "don't be quiet" -> lower threshold
         - "stop talking" / "be quiet" -> raise threshold
         - Persists across sessions via save/load
     """
+
+    # Which emotion vectors constitute "emotional baseline" — averaged into a
+    # neutral centroid that the residual direction is measured against.
+    _NEUTRAL_EMOTIONS: Tuple[str, ...] = ("calm", "trust")
 
     def __init__(self, emotion_vectors: Dict[str, torch.Tensor],
                  hidden_dim: int, device: str = "cpu"):
@@ -1128,26 +1235,69 @@ class CommunicativeDrive:
         self.speak_count = 0
         self.pressure_history: List[float] = []
 
+        # Cache the neutral centroid: average of baseline emotion vectors,
+        # normalized. Anchors "no urge to speak" in the model's own geometry.
+        self._neutral_vec = self._compute_neutral_vec()
+
+    def _compute_neutral_vec(self) -> torch.Tensor:
+        """Centroid of the baseline emotion vectors, direction-normalized."""
+        usable = [self.emotion_vectors[n] for n in self._NEUTRAL_EMOTIONS
+                  if n in self.emotion_vectors]
+        if not usable:
+            usable = list(self.emotion_vectors.values())
+        if not usable:
+            return torch.zeros(self.hidden_dim)
+        stacked = torch.stack([v.cpu().float() for v in usable], dim=0)
+        centroid = stacked.mean(dim=0)
+        n = centroid.norm()
+        return centroid / n if n > 1e-6 else centroid
+
+    def _residual_divergence(self, residual_vec: Optional[torch.Tensor]) -> float:
+        """1 - cosine(residual, neutral). 0.0 = aligned with baseline,
+        1.0 = orthogonal, ~2.0 = opposed. Clipped to [0, 1.2]."""
+        if residual_vec is None:
+            return 0.0
+        v = residual_vec.detach().cpu().float()
+        if v.norm() < 1e-6 or self._neutral_vec.norm() < 1e-6:
+            return 0.0
+        sim = F.cosine_similarity(v.unsqueeze(0), self._neutral_vec.unsqueeze(0)).item()
+        return max(0.0, min(1.2, 1.0 - sim))
+
+    def _compute_patience(self, residual_vec: Optional[torch.Tensor]) -> float:
+        """Patience decays as the residual diverges from the neutral centroid —
+        a long-sustained off-baseline state makes the engine less willing to
+        hold its tongue. Bounded to [0.2, 2.0]."""
+        divergence = self._residual_divergence(residual_vec)
+        target = max(0.2, 1.0 - 0.6 * divergence)
+        return target
+
+    def _compute_pressure_input(self, residual_vec: Optional[torch.Tensor],
+                                goal_strength: float) -> float:
+        """Pressure input in [0, 1]: combines residual magnitude, direction
+        divergence from baseline, and subconscious goal activity. Freshness
+        suppression is applied after accumulation."""
+        res_mag = 0.0
+        if residual_vec is not None:
+            res_mag = float(residual_vec.detach().cpu().norm())
+        divergence = self._residual_divergence(residual_vec)
+        goal = max(0.0, min(1.0, float(goal_strength)))
+        raw = 0.4 * min(res_mag / 2.0, 1.0) + 0.3 * divergence + 0.3 * goal
+        return max(0.0, min(1.0, raw))
+
     def tick(self, emotional_state: Dict[str, float],
              subconscious_goal_strength: float,
-             residual_norm: float, dt: float = 0.5):
+             residual_norm: float, dt: float = 0.5,
+             residual_vec: Optional[torch.Tensor] = None):
         """
         Called every heartbeat tick. All timing derived from latent state.
         No wall clocks consulted for decisions.
-        """
-        # ── Patience dynamics (from emotional state) ──
-        calm = emotional_state.get("calm", 0)
-        curious = emotional_state.get("curious", 0)
-        desperate = emotional_state.get("desperate", 0)
-        trust = emotional_state.get("trust", 0)
 
-        target_patience = (
-            1.0
-            + calm * 0.5
-            - curious * 0.3
-            - desperate * 0.4
-            + trust * 0.1
-        )
+        `residual_vec` (preferred): the full steered-residual vector, used for
+        geometric pressure/patience computation. If omitted, the function
+        falls back to magnitude-only dynamics using `residual_norm`.
+        """
+        # ── Patience dynamics (latent-geometric) ──
+        target_patience = self._compute_patience(residual_vec)
         self.patience += (target_patience - self.patience) * 0.1 * dt
         self.patience = max(0.1, min(2.0, self.patience))
 
@@ -1156,7 +1306,7 @@ class CommunicativeDrive:
         self.interaction_freshness *= (1.0 - 0.02 * dt)
 
         # Emotional distance: how far has the state drifted since last interaction?
-        # Large drift = lots of "subjective time" has passed
+        # Retained as a readout signal for the UI and subjective-time derivation.
         if self.last_interaction_state:
             drift = sum(
                 abs(emotional_state.get(e, 0) - self.last_interaction_state.get(e, 0))
@@ -1171,17 +1321,14 @@ class CommunicativeDrive:
         # the system "feels" that enough time has passed to speak again.
         residual_recovery = max(0, 1.0 - residual_norm / max(self.post_speech_residual, 0.01))
 
-        # ── Communicative pressure (all from latent state) ──
-        emo_magnitude = sum(abs(v) for v in emotional_state.values()) / max(len(emotional_state), 1)
-
-        pressure_input = (
-            0.25 * emo_magnitude                          # Strong feelings seek expression
-            + 0.25 * min(1.0, subconscious_goal_strength) # Goals want voicing
-            + 0.20 * max(0, curious)                      # Curiosity drives engagement
-            + 0.15 * (1.0 - self.interaction_freshness)   # Staleness builds pressure
-            + 0.10 * self.emotional_distance              # Emotional drift = subjective time
-            + 0.05 * max(0, desperate)                    # Urgency
+        # ── Communicative pressure (latent-geometric) ──
+        pressure_input = self._compute_pressure_input(
+            residual_vec if residual_vec is not None else torch.zeros(self.hidden_dim),
+            subconscious_goal_strength,
         )
+
+        # Freshness reduces incoming pressure: right after a turn, nothing is unsaid yet.
+        pressure_input *= (1.0 - self.interaction_freshness * 0.7)
 
         self.pressure = self.pressure * 0.97 + pressure_input * dt * 0.08
         self.pressure = max(0, min(2.0, self.pressure))
@@ -1219,21 +1366,6 @@ class CommunicativeDrive:
         noise = np.random.normal(0, 0.03)
 
         return (self.pressure + noise) > effective_threshold
-
-    def get_thought_seed(self, emotional_state: Dict[str, float],
-                         subconscious_goal_vector: torch.Tensor) -> str:
-        """
-        Select a thought seed based on current emotional state.
-        The seed becomes the generation prompt for autonomous speech.
-        """
-        # Find dominant emotion
-        dominant = max(emotional_state.items(), key=lambda x: abs(x[1]))
-        emo_name = dominant[0] if abs(dominant[1]) > 0.1 else "default"
-
-        # Select from matching seeds, or default
-        seeds = THOUGHT_SEEDS.get(emo_name, THOUGHT_SEEDS["default"])
-        idx = int(abs(hash(str(time.time()))) % len(seeds))
-        return seeds[idx]
 
     def spoke(self, current_residual_norm: float = 0.0):
         """
