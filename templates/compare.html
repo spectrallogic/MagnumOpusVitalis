@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Magnum Opus Vitalis — Living Substrate</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            --bg: #0b0e13;
+            --panel: #141821;
+            --panel-2: #1b202b;
+            --border: #2a313d;
+            --text: #d8dee9;
+            --muted: #6b7686;
+            --accent: #7aa2f7;
+            --good: #9ece6a;
+            --warn: #e0af68;
+            --bad: #f7768e;
+            --raw: #565f89;
+            --engine: #bb9af7;
+            --cyan: #7dcfff;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        header {
+            padding: 10px 18px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+        header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+        header .meta { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 10px; }
+        #live-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--bad); display: inline-block;
+        }
+        #live-dot.on { background: var(--good); animation: pulse 1.6s infinite; }
+        #live-dot.err { background: var(--warn); }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(158,206,106,.5); }
+            70% { box-shadow: 0 0 0 7px rgba(158,206,106,0); }
+            100% { box-shadow: 0 0 0 0 rgba(158,206,106,0); }
+        }
+        main {
+            display: grid;
+            grid-template-columns: 1.45fr 1fr;
+            gap: 14px;
+            padding: 14px;
+            height: calc(100vh - 48px);
+        }
+        .chat-area, .dash-area {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .chat-cols {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1px;
+            flex: 1;
+            min-height: 0;
+            background: var(--border);
+        }
+        .col { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+        .col-head {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: var(--muted);
+        }
+        .col.raw .col-head { color: var(--raw); }
+        .col.engine .col-head { color: var(--engine); }
+        .messages { flex: 1; overflow-y: auto; padding: 10px 12px; }
+        .msg {
+            margin-bottom: 10px;
+            padding: 8px 10px;
+            background: var(--panel-2);
+            border-radius: 4px;
+            border-left: 2px solid transparent;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .msg.user { border-left-color: var(--accent); }
+        .msg.bot.raw { border-left-color: var(--raw); }
+        .msg.bot.engine { border-left-color: var(--engine); }
+        .msg.autonomous { border-left-color: var(--warn); font-style: italic; }
+        .msg .who {
+            font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+            color: var(--muted); margin-bottom: 3px;
+        }
+        .input-bar { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+        .input-bar input {
+            flex: 1; background: var(--bg); color: var(--text);
+            border: 1px solid var(--border); border-radius: 4px;
+            padding: 7px 10px; font: inherit;
+        }
+        .input-bar input:focus { outline: none; border-color: var(--accent); }
+        button {
+            background: var(--accent); color: var(--bg); border: none; border-radius: 4px;
+            padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+        }
+        button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+        button:hover { filter: brightness(1.1); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .dash-area { overflow-y: auto; padding: 12px; }
+        .panel {
+            background: var(--panel-2); border: 1px solid var(--border);
+            border-radius: 4px; padding: 10px 12px; margin-bottom: 10px;
+        }
+        .panel h3 {
+            margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase;
+            letter-spacing: .08em; color: var(--muted); font-weight: 600;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .row {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 8px; margin: 2px 0; font-size: 12px;
+        }
+        .row .label { color: var(--muted); }
+        .row .val { font-variant-numeric: tabular-nums; }
+        .bar-row {
+            display: grid; grid-template-columns: 78px 1fr 44px;
+            gap: 8px; align-items: center; margin: 3px 0; font-size: 12px;
+        }
+        .bar-row .name { color: var(--muted); font-size: 11px; }
+        .bar-row .val { text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; }
+        .bar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; position: relative; }
+        .bar .fill { height: 100%; background: var(--accent); transition: width .18s linear; }
+        /* signed center-zero bars for emotions */
+        .bar.signed .fill { position: absolute; top: 0; bottom: 0; transition: all .18s linear; }
+        .bar.signed .zero { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: var(--border); }
+
+        .pressure-meter { position: relative; height: 10px; background: var(--bg); border-radius: 5px; overflow: hidden; margin: 4px 0; }
+        .pressure-meter .fill { height: 100%; background: var(--warn); transition: width .18s; }
+        .pressure-meter .thr { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--bad); }
+
+        .flow-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; font-size: 11px; }
+        .flow-cell { background: var(--bg); border-radius: 3px; padding: 5px 6px; text-align: center; }
+        .flow-cell .name { color: var(--muted); font-size: 10px; }
+        .flow-cell .val { font-variant-numeric: tabular-nums; }
+
+        .pill {
+            display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px;
+            background: var(--bg); color: var(--muted);
+            text-transform: uppercase; letter-spacing: .05em;
+        }
+        .pill.on { background: var(--good); color: var(--bg); }
+        .pill.warn { background: var(--warn); color: var(--bg); }
+        .pill.stage { background: var(--engine); color: var(--bg); text-transform: none; }
+
+        canvas#bus-spark { width: 100%; height: 46px; display: block; background: var(--bg); border-radius: 3px; }
+
+        /* Futures table */
+        .future {
+            display: grid;
+            grid-template-columns: 1fr 92px 40px;
+            gap: 8px; align-items: center;
+            padding: 5px 7px; margin: 3px 0;
+            background: var(--bg); border-radius: 3px;
+            border-left: 2px solid transparent; font-size: 12px;
+        }
+        .future.chosen { border-left-color: var(--good); }
+        .future .fword { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .future .fword .src { color: var(--muted); font-size: 10px; margin-left: 5px; }
+        .future .fbars { display: grid; gap: 2px; }
+        .future .fbars .bar { height: 4px; }
+        .future .fbars .p .fill { background: var(--cyan); }
+        .future .fbars .b .fill { background: var(--good); }
+        .future .fbars .r .fill { background: var(--bad); }
+        .future .futil { text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; }
+        .penumbra-strip { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+        .penumbra-strip .p-pill {
+            padding: 1px 8px; border-radius: 10px; font-size: 11px;
+            background: var(--bg); color: var(--engine); border: 1px solid var(--border);
+        }
+
+        /* Abstraction ladder */
+        .level { margin: 6px 0; }
+        .level .lvl-head { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+        .cells { display: flex; flex-wrap: wrap; gap: 3px; }
+        .cell {
+            padding: 2px 7px; border-radius: 3px; background: var(--bg);
+            font-size: 10px; color: var(--muted); border: 1px solid var(--border);
+            max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .cell.active { background: var(--engine); color: var(--bg); border-color: var(--engine); }
+        .level.locked { opacity: .35; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Magnum Opus Vitalis — Living Substrate</h1>
+    <div class="meta">
+        <span class="pill stage" id="stage-pill">newborn</span>
+        <span>felt <span id="felt-time">0</span>s · ×<span id="dilation">1.0</span></span>
+        <span>turn <span id="turn-count">0</span></span>
+        <span id="live-dot" title="stream"></span>
+        <button class="ghost" id="reset-btn">Reset</button>
+    </div>
+</header>
+
+<main>
+    <div class="chat-area">
+        <div class="chat-cols">
+            <div class="col raw">
+                <div class="col-head">Raw model · no engine</div>
+                <div class="messages" id="raw-messages"></div>
+            </div>
+            <div class="col engine">
+                <div class="col-head">Engine-steered · living substrate</div>
+                <div class="messages" id="engine-messages"></div>
+            </div>
+        </div>
+        <div class="input-bar">
+            <input type="text" id="user-input" placeholder="Send the same message to both columns…" autofocus>
+            <button id="send-btn">Send</button>
+        </div>
+    </div>
+
+    <div class="dash-area" id="dash">
+        <div class="panel">
+            <h3>Latent Bus <span class="val" id="bus-ticks-h" style="text-transform:none"></span></h3>
+            <canvas id="bus-spark" width="600" height="92"></canvas>
+            <div class="row"><span class="label">state / velocity</span>
+                <span class="val"><span id="bus-state-norm">—</span> · <span id="bus-velocity-norm">—</span></span></div>
+            <div class="row"><span class="label">divergence from self</span><span class="val" id="bus-divergence">—</span></div>
+        </div>
+
+        <div class="panel">
+            <h3>Speculation — imagined futures</h3>
+            <div id="futures"></div>
+            <div class="row" style="margin-top:4px"><span class="label">back of mind (penumbra)</span></div>
+            <div class="penumbra-strip" id="penumbra"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Self model</h3>
+            <div class="bar-row"><span class="name">continuity</span>
+                <div class="bar"><div class="fill" id="self-continuity-bar" style="background:var(--engine)"></div></div>
+                <span class="val" id="self-continuity">—</span></div>
+            <div class="bar-row"><span class="name">time flowing</span>
+                <div class="bar"><div class="fill" id="self-flow-bar" style="background:var(--cyan)"></div></div>
+                <span class="val" id="self-flow">—</span></div>
+            <div class="row"><span class="label">self-surprise (pred. error)</span><span class="val" id="self-error">—</span></div>
+            <div class="row"><span class="label">leaking memory</span><span class="val" id="self-leak">—</span></div>
+        </div>
+
+        <div class="panel">
+            <h3>Abstraction ladder <span class="val" id="ladder-obs" style="text-transform:none"></span></h3>
+            <div id="ladder"></div>
+            <div class="row"><span class="label">novelty (this feels new)</span><span class="val" id="ladder-novelty">—</span></div>
+        </div>
+
+        <div class="panel">
+            <h3>Limbic — blended emotions</h3>
+            <div id="emotion-bars"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Modulators — arousal · reward · calm · stress</h3>
+            <div id="neuromod-bars"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Bus provenance — who is writing the substrate</h3>
+            <div id="provenance-rows"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Forecast ledger — imagined futures, held to account</h3>
+            <div class="row"><span class="label">open · resolved · expired</span>
+                <span class="val"><span id="fc-open">—</span> · <span id="fc-resolved">—</span> · <span id="fc-expired">—</span></span></div>
+            <div class="row"><span class="label">brier · hit rate · ece</span>
+                <span class="val"><span id="fc-brier">—</span> · <span id="fc-hit">—</span> · <span id="fc-ece">—</span></span></div>
+            <div id="fc-recent"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Subconscious — latest intrusive</h3>
+            <div class="row">
+                <span>
+                    <span class="pill" id="intrusive-source">—</span>
+                    <span class="pill warn" id="intrusive-surprise" style="display:none">surprise</span>
+                </span>
+                <span class="val" id="intrusive-word" style="color:var(--engine)"></span>
+            </div>
+            <div class="row"><span class="label">resonant → felt</span><span class="val" id="intrusive-counts">—</span></div>
+            <div class="row"><span class="label">strength · confidence</span>
+                <span class="val"><span id="intrusive-norm">—</span> · <span id="intrusive-confidence">—</span></span></div>
+        </div>
+
+        <div class="panel">
+            <h3>Executive — pressure to speak</h3>
+            <div class="pressure-meter">
+                <div class="fill" id="executive-fill"></div>
+                <div class="thr" id="executive-thr"></div>
+            </div>
+            <div class="row"><span class="label">pressure / threshold</span>
+                <span class="val"><span id="executive-pressure">—</span> / <span id="executive-threshold">—</span></span></div>
+            <div class="row"><span class="label">salience gain · novelty</span>
+                <span class="val"><span id="salience-gain">—</span> · <span id="salience-novelty">—</span></span></div>
+        </div>
+
+        <div class="panel">
+            <h3>Memory &amp; time</h3>
+            <div class="row"><span class="label">traces (false)</span>
+                <span class="val"><span id="memory-size">—</span> (<span id="memory-false">—</span>)</span></div>
+            <div class="row"><span class="label">subjective elapsed · pace</span>
+                <span class="val"><span id="temporal-elapsed">—</span> · <span id="temporal-pace">—</span></span></div>
+            <div class="row"><span class="label">spark</span>
+                <span class="val"><span class="pill" id="sparks-active">off</span> <span id="sparks-fires">0</span> fires</span></div>
+        </div>
+
+        <div class="panel">
+            <h3>Flow clocks (ticks)</h3>
+            <div class="flow-grid">
+                <div class="flow-cell"><div class="name">flow 50ms</div><div class="val" id="flow-flow">—</div></div>
+                <div class="flow-cell"><div class="name">perc 200ms</div><div class="val" id="flow-perception">—</div></div>
+                <div class="flow-cell"><div class="name">exp 1.5s</div><div class="val" id="flow-expensive">—</div></div>
+                <div class="flow-cell"><div class="name">slow 30s</div><div class="val" id="flow-slow">—</div></div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+const NEUROMODS = ["stress", "reward", "calm", "arousal"];
+const EMOTIONS = ["calm", "curious", "desperate", "joy", "anger", "fear", "surprise", "trust", "sadness", "disgust"];
+const NM_COLORS = {stress: "var(--bad)", reward: "var(--good)", calm: "var(--cyan)", arousal: "var(--warn)"};
+
+function bars(parent, values, names, max = 1.0, colors = null) {
+    parent.innerHTML = "";
+    for (const name of names) {
+        const v = values[name] ?? 0;
+        const pct = Math.min(100, Math.max(0, (Math.abs(v) / max) * 100));
+        const color = colors ? (colors[name] || "var(--accent)") : "var(--accent)";
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        row.innerHTML = `<span class="name">${name}</span>
+            <div class="bar"><div class="fill" style="width:${pct}%;background:${color}"></div></div>
+            <span class="val">${v.toFixed(2)}</span>`;
+        parent.appendChild(row);
+    }
+}
+
+function signedBars(parent, values, names, max = 1.0) {
+    parent.innerHTML = "";
+    for (const name of names) {
+        const v = values[name] ?? 0;
+        const half = Math.min(50, (Math.abs(v) / max) * 50);
+        const style = v >= 0
+            ? `left:50%;width:${half}%;background:var(--good)`
+            : `right:50%;width:${half}%;background:var(--bad)`;
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        row.innerHTML = `<span class="name">${name}</span>
+            <div class="bar signed"><div class="zero"></div><div class="fill" style="${style}"></div></div>
+            <span class="val">${v.toFixed(2)}</span>`;
+        parent.appendChild(row);
+    }
+}
+
+/* --- bus sparkline ------------------------------------------------ */
+const sparkS = [], sparkV = [], SPARK_N = 180;
+function drawSpark() {
+    const cv = document.getElementById("bus-spark");
+    const ctx = cv.getContext("2d");
+    const w = cv.width, h = cv.height;
+    ctx.clearRect(0, 0, w, h);
+    const maxY = Math.max(0.5, ...sparkS, ...sparkV) * 1.15;
+    const line = (arr, color) => {
+        if (arr.length < 2) return;
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        arr.forEach((v, i) => {
+            const x = (i / (SPARK_N - 1)) * w;
+            const y = h - (v / maxY) * (h - 6) - 3;
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+    };
+    line(sparkS, "#bb9af7");
+    line(sparkV, "#7dcfff");
+}
+
+/* --- dashboard update ---------------------------------------------- */
+function updateDashboard(s) {
+    if (!s || s.error) return;
+    if (s.turn !== undefined) document.getElementById("turn-count").textContent = s.turn;
+
+    const bus = s.bus || {};
+    document.getElementById("bus-state-norm").textContent = (bus.state_norm ?? 0).toFixed(3);
+    document.getElementById("bus-velocity-norm").textContent = (bus.velocity_norm ?? 0).toFixed(3);
+    document.getElementById("bus-divergence").textContent = (bus.divergence ?? 0).toFixed(3);
+    document.getElementById("bus-ticks-h").textContent = `${bus.tick_count ?? 0} ticks`;
+    sparkS.push(bus.state_norm ?? 0); if (sparkS.length > SPARK_N) sparkS.shift();
+    sparkV.push(bus.velocity_norm ?? 0); if (sparkV.length > SPARK_N) sparkV.shift();
+    drawSpark();
+
+    bars(document.getElementById("neuromod-bars"), s.neuromod || {}, NEUROMODS, 2.0, NM_COLORS);
+    signedBars(document.getElementById("emotion-bars"), (s.limbic && s.limbic.blended) || {}, EMOTIONS, 1.0);
+
+    /* bus provenance — every substrate write, signed by its source */
+    const prov = s.bus_provenance || {};
+    const pdiv = document.getElementById("provenance-rows");
+    pdiv.innerHTML = "";
+    const sources = Object.keys(prov).sort(
+        (a, b) => (prov[b].writes || 0) - (prov[a].writes || 0));
+    for (const src of sources) {
+        const p = prov[src] || {};
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = `<span class="label">${escapeHtml(src)}
+                <span class="pill">${escapeHtml((p.kinds || []).join("·"))}</span></span>
+            <span class="val">${p.writes ?? 0} writes · norm ${(p.mean_norm ?? 0).toFixed(3)}</span>`;
+        row.title = `last write at bus tick ${p.last_clock ?? "—"}`;
+        pdiv.appendChild(row);
+    }
+    if (!sources.length)
+        pdiv.innerHTML = '<div class="row"><span class="label">no writes recorded yet</span></div>';
+
+    /* forecast ledger — speculation's futures resolved against reality */
+    const fc = s.forecasts || {};
+    document.getElementById("fc-open").textContent = fc.open ?? "—";
+    document.getElementById("fc-resolved").textContent = fc.resolved ?? "—";
+    document.getElementById("fc-expired").textContent = fc.expired ?? "—";
+    document.getElementById("fc-brier").textContent =
+        fc.brier != null ? fc.brier.toFixed(3) : "—";
+    document.getElementById("fc-hit").textContent =
+        fc.hit_rate != null ? fc.hit_rate.toFixed(3) : "—";
+    document.getElementById("fc-ece").textContent =
+        fc.ece != null ? fc.ece.toFixed(3) : "—";
+    const rdiv = document.getElementById("fc-recent");
+    rdiv.innerHTML = "";
+    for (const f of (fc.recent || [])) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const cls = f.status === "hit" ? "good" : f.status === "miss" ? "warn" : "";
+        row.innerHTML = `<span class="label">“${escapeHtml((f.phrase || "·").slice(0, 26))}”
+                <span class="pill">${escapeHtml(f.mode || "")}</span></span>
+            <span class="val">P=${(f.probability ?? 0).toFixed(2)}
+                <span class="pill ${cls}">${escapeHtml(f.status || "")}</span></span>`;
+        if (f.evidence_cos != null) row.title = `evidence cos ${f.evidence_cos}`;
+        rdiv.appendChild(row);
+    }
+    if (!(fc.recent || []).length)
+        rdiv.innerHTML = '<div class="row"><span class="label">nothing resolved yet</span></div>';
+
+    /* speculation */
+    const spec = s.speculative || {};
+    const fdiv = document.getElementById("futures");
+    fdiv.innerHTML = "";
+    for (const f of (spec.futures || [])) {
+        const el = document.createElement("div");
+        el.className = "future" + (f.chosen ? " chosen" : "");
+        const bar = (v, cls) =>
+            `<div class="bar ${cls}"><div class="fill" style="width:${Math.min(100, Math.max(0, v * 100))}%"></div></div>`;
+        el.innerHTML = `
+            <span class="fword">“${escapeHtml(f.word || "·")}”<span class="src">${escapeHtml(f.source || "")}</span></span>
+            <span class="fbars">${bar(f.probability, "p")}${bar(f.benefit, "b")}${bar(f.risk, "r")}</span>
+            <span class="futil">${(f.utility ?? 0).toFixed(2)}</span>`;
+        el.title = `P=${f.probability} benefit=${f.benefit} risk=${f.risk}`;
+        fdiv.appendChild(el);
+    }
+    if (!(spec.futures || []).length) fdiv.innerHTML = '<div class="row"><span class="label">imagining…</span></div>';
+    const pen = document.getElementById("penumbra");
+    pen.innerHTML = "";
+    for (const p of (spec.penumbra || [])) {
+        const el = document.createElement("span");
+        el.className = "p-pill";
+        el.style.opacity = Math.max(0.25, Math.min(1, p.weight * 12));
+        el.textContent = p.word || "·";
+        el.title = `weight ${p.weight}`;
+        pen.appendChild(el);
+    }
+
+    /* self model */
+    const sm = s.self_model || {};
+    document.getElementById("stage-pill").textContent = (s.abstraction && s.abstraction.stage) || "—";
+    document.getElementById("felt-time").textContent = (sm.felt_time ?? 0).toFixed(0);
+    document.getElementById("dilation").textContent = (sm.dilation ?? 1).toFixed(2);
+    const cont = Math.max(0, Math.min(1, ((sm.continuity ?? 0) + 1) / 2));
+    document.getElementById("self-continuity-bar").style.width = `${cont * 100}%`;
+    document.getElementById("self-continuity").textContent = (sm.continuity ?? 0).toFixed(2);
+    document.getElementById("self-flow-bar").style.width = `${Math.min(100, (sm.temporal_flow ?? 0) * 100)}%`;
+    document.getElementById("self-flow").textContent = (sm.temporal_flow ?? 0).toFixed(2);
+    document.getElementById("self-error").textContent = (sm.prediction_error ?? 0).toFixed(3);
+    document.getElementById("self-leak").textContent = sm.last_leak || "—";
+
+    /* abstraction ladder */
+    const ab = s.abstraction || {};
+    document.getElementById("ladder-obs").textContent = `${ab.observations ?? 0} moments`;
+    document.getElementById("ladder-novelty").textContent = (ab.novelty ?? 0).toFixed(3);
+    const lad = document.getElementById("ladder");
+    lad.innerHTML = "";
+    (ab.levels || []).forEach((lvl, li) => {
+        const div = document.createElement("div");
+        div.className = "level" + (lvl.unlocked ? "" : " locked");
+        const active = (ab.current_path || [])[li];
+        let cells = "";
+        for (let i = 0; i < lvl.slots; i++) {
+            const label = (lvl.labels || [])[i];
+            const isActive = lvl.unlocked && i === active;
+            cells += `<span class="cell${isActive ? " active" : ""}">${label ? escapeHtml(label) : "·"}</span>`;
+        }
+        div.innerHTML = `<div class="lvl-head"><span>level ${li} — ${lvl.slots} concepts</span>
+            <span>${lvl.unlocked ? (lvl.updates + " updates") : ("unlocks @ " + lvl.unlock_at)}</span></div>
+            <div class="cells">${cells}</div>`;
+        lad.appendChild(div);
+    });
+
+    /* subconscious */
+    const sub = s.subconscious || {};
+    document.getElementById("intrusive-source").textContent = sub.intrusive_source || "—";
+    document.getElementById("intrusive-surprise").style.display = sub.surprise ? "inline-block" : "none";
+    document.getElementById("intrusive-word").textContent = sub.intrusive_word ? `“${sub.intrusive_word}”` : "";
+    document.getElementById("intrusive-norm").textContent = (sub.intrusive_norm ?? 0).toFixed(3);
+    document.getElementById("intrusive-confidence").textContent = (sub.intrusive_confidence ?? 0).toFixed(2);
+    document.getElementById("intrusive-counts").textContent = `${sub.l1_count ?? 0} → ${sub.l2_count ?? 0}`;
+
+    /* executive + salience */
+    const ex = s.executive || {};
+    const pressure = ex.pressure ?? 0, thr = ex.effective_threshold ?? 1.0;
+    const maxScale = Math.max(1.0, pressure * 1.2, thr * 1.2);
+    document.getElementById("executive-fill").style.width = `${(pressure / maxScale) * 100}%`;
+    document.getElementById("executive-thr").style.left = `${(thr / maxScale) * 100}%`;
+    document.getElementById("executive-pressure").textContent = pressure.toFixed(3);
+    document.getElementById("executive-threshold").textContent = thr.toFixed(3);
+    const sal = s.salience || {};
+    document.getElementById("salience-gain").textContent = (sal.gain ?? 0).toFixed(2);
+    document.getElementById("salience-novelty").textContent = (sal.novelty ?? 0).toFixed(2);
+
+    /* memory + temporal + sparks */
+    const mem = s.memory || {};
+    document.getElementById("memory-size").textContent = mem.size ?? 0;
+    document.getElementById("memory-false").textContent = mem.n_false ?? 0;
+    const tmp = s.temporal || {};
+    document.getElementById("temporal-elapsed").textContent = (tmp.subjective_elapsed ?? 0).toFixed(2);
+    document.getElementById("temporal-pace").textContent = (tmp.pace ?? 0).toFixed(2);
+    const sp = s.sparks || {};
+    const spPill = document.getElementById("sparks-active");
+    spPill.textContent = sp.active ? "on" : "off";
+    spPill.className = sp.active ? "pill on" : "pill";
+    document.getElementById("sparks-fires").textContent = sp.fires_total ?? 0;
+
+    const f = s.flow_metrics || {};
+    document.getElementById("flow-flow").textContent = (f.flow && f.flow.ticks) || 0;
+    document.getElementById("flow-perception").textContent = (f.perception && f.perception.ticks) || 0;
+    document.getElementById("flow-expensive").textContent = (f.expensive && f.expensive.ticks) || 0;
+    document.getElementById("flow-slow").textContent = (f.slow && f.slow.ticks) || 0;
+
+    /* autonomous speech arriving over the stream */
+    for (const msg of (s.autonomous || [])) {
+        appendMsg("engine-messages", "engine (spontaneous)", msg, "bot engine autonomous");
+    }
+}
+
+/* --- chat ----------------------------------------------------------- */
+function appendMsg(containerId, who, text, klass = "") {
+    const container = document.getElementById(containerId);
+    const div = document.createElement("div");
+    div.className = `msg ${klass}`;
+    div.innerHTML = `<div class="who">${who}</div><div>${escapeHtml(text)}</div>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+}
+
+async function send() {
+    const input = document.getElementById("user-input");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    document.getElementById("send-btn").disabled = true;
+
+    appendMsg("raw-messages", "you", text, "user");
+    appendMsg("engine-messages", "you", text, "user");
+
+    try {
+        const r = await fetch("/api/compare", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({message: text}),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+            appendMsg("engine-messages", "error", data.error || "request failed", "bot engine");
+            return;
+        }
+        appendMsg("raw-messages", "raw", data.raw_response, "bot raw");
+        appendMsg("engine-messages", "engine", data.engine_response, "bot engine");
+    } catch (e) {
+        appendMsg("engine-messages", "error", String(e), "bot engine");
+    } finally {
+        document.getElementById("send-btn").disabled = false;
+        input.focus();
+    }
+}
+
+async function reset() {
+    if (!confirm("Reset both conversations and engine state?")) return;
+    await fetch("/api/reset", {method: "POST"});
+    document.getElementById("raw-messages").innerHTML = "";
+    document.getElementById("engine-messages").innerHTML = "";
+    document.getElementById("turn-count").textContent = "0";
+}
+
+/* --- realtime stream (SSE) with polling fallback -------------------- */
+let sse = null, pollTimer = null;
+function connectStream() {
+    try {
+        sse = new EventSource("/api/stream");
+        sse.onmessage = (ev) => {
+            let s = null;
+            try { s = JSON.parse(ev.data); } catch (e) {}
+            const dot = document.getElementById("live-dot");
+            if (!s || s.error) { dot.className = "err"; return; }   // error payload ≠ live
+            dot.className = "on";
+            updateDashboard(s);
+        };
+        sse.onerror = () => {
+            document.getElementById("live-dot").className = "";
+            sse.close();
+            sse = null;
+            if (!pollTimer) pollTimer = setInterval(pollOnce, 2000);
+            setTimeout(connectStream, 3000);
+        };
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    } catch (e) {
+        if (!pollTimer) pollTimer = setInterval(pollOnce, 2000);
+    }
+}
+async function pollOnce() {
+    try {
+        const r = await fetch("/api/status");
+        if (r.ok) updateDashboard(await r.json());
+    } catch (e) {}
+}
+
+document.getElementById("send-btn").addEventListener("click", send);
+document.getElementById("user-input").addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+document.getElementById("reset-btn").addEventListener("click", reset);
+connectStream();
+</script>
+</body>
+</html>

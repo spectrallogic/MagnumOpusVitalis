@@ -1,0 +1,1265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VITALIS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    :root {
+        --hud: #8be9fd;
+        --hud-dim: rgba(139, 233, 253, 0.35);
+        --bg: #04060a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); }
+    body {
+        font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+        color: var(--hud);
+        user-select: none;
+    }
+    canvas#scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+
+    /* scanline + vignette overlays */
+    .fx {
+        position: fixed; inset: 0; pointer-events: none; z-index: 3;
+    }
+    /* scanlines deleted (Era 8): CRT cosplay implying a sensor that
+       doesn't exist — bind or remove */
+    .fx.vignette {
+        background: radial-gradient(ellipse at center,
+            transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+    }
+
+    /* HUD */
+    .hud {
+        position: fixed; z-index: 5; font-size: 11px;
+        letter-spacing: 0.14em; line-height: 1.7;
+    }
+    .hud .title { font-size: 12px; color: #fff; text-shadow: 0 0 8px var(--hud); }
+    .hud .label { color: var(--hud-dim); font-size: 9px; letter-spacing: 0.22em; }
+    .hud .value { color: var(--hud); }
+    .bracket {
+        position: fixed; width: 26px; height: 26px; z-index: 5;
+        border: 1px solid var(--hud-dim); pointer-events: none;
+    }
+    .bracket.tl { top: 14px; left: 14px; border-right: none; border-bottom: none; }
+    .bracket.tr { top: 14px; right: 14px; border-left: none; border-bottom: none; }
+    .bracket.bl { bottom: 14px; left: 14px; border-right: none; border-top: none; }
+    .bracket.br { bottom: 14px; right: 14px; border-left: none; border-top: none; }
+
+    #hud-tl { top: 28px; left: 34px; }
+    #hud-tr { top: 28px; right: 34px; text-align: right; max-width: 300px; }
+    #hud-bl { bottom: 110px; left: 34px; }
+    #hud-br { bottom: 110px; right: 34px; text-align: right; }
+
+    .meter { width: 150px; height: 3px; background: rgba(139,233,253,0.12);
+             margin: 3px 0 6px; position: relative; }
+    #hud-tr .meter, #hud-br .meter { margin-left: auto; }
+    .meter .fill { position: absolute; left: 0; top: 0; bottom: 0;
+                   background: var(--hud); box-shadow: 0 0 6px var(--hud);
+                   transition: width 0.25s linear; }
+    #hud-br .meter .fill { left: auto; right: 0; }
+
+    .mini { display: flex; align-items: center; gap: 7px; margin: 1px 0; }
+    #hud-br .mini, #hud-tr .mini { flex-direction: row-reverse; }
+    .mini .name { width: 82px; font-size: 9px; color: var(--hud-dim);
+                  letter-spacing: 0.18em; text-transform: uppercase; }
+    #hud-br .mini .name, #hud-tr .mini .name { text-align: right; }
+    .mini .bar { width: 90px; height: 2px; background: rgba(139,233,253,0.1); position: relative; }
+    .mini .bar .fill { position: absolute; top: 0; bottom: 0; left: 0;
+                       transition: width 0.25s linear; }
+    #hud-br .mini .bar .fill, #hud-tr .mini .bar .fill { left: auto; right: 0; }
+
+    .future-row { display: flex; gap: 7px; justify-content: flex-end;
+                  align-items: center; margin: 1px 0; }
+    .future-row .w { color: var(--hud); font-size: 10px; }
+    .future-row.chosen .w { color: #fff; text-shadow: 0 0 7px var(--hud); }
+    .future-row .u { color: var(--hud-dim); font-size: 9px; width: 38px; }
+    .penumbra-words { color: rgba(187, 154, 247, 0.55); font-size: 10px;
+                      letter-spacing: 0.1em; margin-top: 2px; }
+
+    /* Console: captions + controls */
+    #console {
+        position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+        width: min(760px, 92vw); z-index: 6; text-align: center;
+    }
+    #caption {
+        min-height: 46px; font-size: 15px; letter-spacing: 0.04em;
+        color: #e6f7ff; text-shadow: 0 0 12px rgba(139,233,253,0.8);
+        margin-bottom: 6px; line-height: 1.5;
+    }
+    #caption .tag { display:block; font-size: 9px; letter-spacing: 0.3em;
+                    color: var(--hud-dim); margin-bottom: 3px; }
+    #interim { min-height: 18px; font-size: 12px; color: rgba(230,247,255,0.5);
+               font-style: italic; margin-bottom: 8px; }
+    #controls { display: flex; gap: 10px; justify-content: center; align-items: center; }
+    #mic {
+        width: 54px; height: 54px; border-radius: 50%;
+        border: 1px solid var(--hud); background: rgba(139,233,253,0.06);
+        color: var(--hud); cursor: pointer; position: relative; flex: 0 0 auto;
+        display: flex; align-items: center; justify-content: center;
+    }
+    #mic svg { width: 22px; height: 22px; fill: currentColor; }
+    #mic.listening { color: #ff5f87; border-color: #ff5f87;
+                     box-shadow: 0 0 18px rgba(255,95,135,0.5); }
+    #mic.listening::after {
+        content: ""; position: absolute; inset: -7px; border-radius: 50%;
+        border: 1px solid rgba(255,95,135,0.6); animation: micpulse 1.2s infinite;
+    }
+    /* session active but mic paused (AI thinking or speaking) */
+    #mic.paused { color: #e0af68; border-color: #e0af68;
+                  box-shadow: 0 0 14px rgba(224,175,104,0.45); }
+    @keyframes micpulse {
+        0% { transform: scale(0.85); opacity: 1; }
+        100% { transform: scale(1.35); opacity: 0; }
+    }
+    #mic:disabled { opacity: 0.35; cursor: not-allowed; }
+    #mute {
+        width: 42px; height: 42px; border-radius: 50%;
+        border: 1px solid rgba(139,233,253,0.4); background: transparent;
+        color: var(--hud); cursor: pointer; font-size: 10px;
+        letter-spacing: 0.08em; flex: 0 0 auto;
+    }
+    #mute.off { color: #566; border-color: #344; text-decoration: line-through; }
+    #text-in {
+        flex: 1; max-width: 460px; background: rgba(4,6,10,0.75);
+        border: 1px solid rgba(139,233,253,0.25); color: #e6f7ff;
+        padding: 9px 13px; font: inherit; font-size: 13px; border-radius: 3px;
+        letter-spacing: 0.03em;
+    }
+    #text-in:focus { outline: none; border-color: var(--hud); }
+    #send {
+        background: transparent; color: var(--hud); border: 1px solid var(--hud);
+        padding: 9px 16px; font: inherit; font-size: 11px; letter-spacing: 0.2em;
+        cursor: pointer; border-radius: 3px;
+    }
+    #send:hover { background: rgba(139,233,253,0.12); }
+    #stt-status { font-size: 9px; color: var(--hud-dim); letter-spacing: 0.2em; margin-top: 7px; }
+    #live { position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+            z-index: 5; font-size: 9px; letter-spacing: 0.4em; color: var(--hud-dim); }
+    #live b { color: #9ece6a; text-shadow: 0 0 8px #9ece6a; font-weight: normal; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="fx vignette"></div>
+<div class="bracket tl"></div><div class="bracket tr"></div>
+<div class="bracket bl"></div><div class="bracket br"></div>
+<div id="live">VITALIS <b id="live-state">● OFFLINE</b></div>
+<div id="disclosure" style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%);
+     font:10px Consolas,monospace; letter-spacing:0.06em; color:#3d4a63; text-align:center;
+     z-index:9; pointer-events:none;">
+    presence motion (blink · breath · gaze · parallax) is decorative — every other
+    motion is signal-bound · mouth waveform is stylized, its amplitude follows
+    speaking state and bus velocity only (no audio envelope) · a frozen grey face
+    = engine offline</div>
+
+<div class="hud" id="hud-tl">
+    <div class="title">MAGNUM OPUS VITALIS</div>
+    <div class="label">DEVELOPMENTAL STAGE</div>
+    <div class="value" id="h-stage">—</div>
+    <div class="label">SELF-CONTINUITY</div>
+    <div class="meter"><div class="fill" id="h-cont" style="width:0%"></div></div>
+    <div class="label">FELT TIME <span class="value" id="h-felt">0</span>s
+        · DILATION <span class="value" id="h-dil">×1.0</span></div>
+    <div class="label">FLOW <span class="value" id="h-ticks">0</span> TICKS @ <span class="value" id="h-hz">—</span>HZ</div>
+    <div class="label">REMINDED OF <span class="value" id="h-recall" style="color:#bb9af7">—</span></div>
+</div>
+
+<div class="hud" id="hud-tr">
+    <div class="label">IMAGINED FUTURES</div>
+    <div id="h-futures"></div>
+    <div class="label" style="margin-top:6px">BACK OF MIND</div>
+    <div class="penumbra-words" id="h-penumbra">—</div>
+</div>
+
+<div class="hud" id="hud-bl">
+    <div class="label" style="margin-bottom:4px">EMOTIONAL FIELD</div>
+    <div id="h-emotions"></div>
+</div>
+
+<div class="hud" id="hud-br">
+    <div class="label" style="margin-bottom:4px">MODULATION — arousal · reward · calm · stress</div>
+    <div id="h-chem"></div>
+</div>
+
+<div id="console">
+    <div id="caption"></div>
+    <div id="interim"></div>
+    <div id="controls">
+        <button id="mic" title="talk to it">
+            <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+        </button>
+        <button id="mute" title="engine sounds on/off">SND</button>
+        <input type="text" id="text-in" placeholder="or type to it…" autocomplete="off">
+        <button id="send">SEND</button>
+    </div>
+    <div id="stt-status"></div>
+</div>
+
+<script>
+"use strict";
+
+/* ================= emotion palette ================= */
+const EMO_COLORS = {
+    joy:       [255, 209, 102],
+    calm:      [122, 162, 247],
+    curious:   [125, 207, 255],
+    trust:     [158, 206, 106],
+    surprise:  [255, 250, 200],
+    fear:      [187, 154, 247],
+    anger:     [247, 118, 142],
+    sadness:   [ 84, 110, 180],
+    disgust:   [140, 200, 160],
+    desperate: [255, 158, 100],
+};
+const EMOTIONS = Object.keys(EMO_COLORS);
+const CHEM = ["stress", "reward", "calm", "arousal"];
+const CHEM_COLORS = { stress: "#f7768e", reward: "#9ece6a",
+                      calm: "#7dcfff", arousal: "#e0af68" };
+
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+/* ================= AudioFX — the engine's drone language ==============
+   Synthesized WebAudio only (no files). Deep hums and drones signal
+   state changes, R2D2-style but subterranean. Anti-annoyance is built
+   in: per-cue cooldowns, a global rate cap, low mix levels, mute. */
+const AudioFX = (() => {
+    let ctx = null, master = null, muted = false;
+    let ambOsc1 = null, ambOsc2 = null, ambGain = null, ambFilter = null;
+    let spkGain = null, spkOsc1 = null, spkOsc2 = null, spkLfo = null, spkLfoGain = null;
+    const lastCue = {};             // name -> timestamp
+    let cueLog = [];                // global rate limiter
+    const COOLDOWN = {              // seconds between same-family cues
+        sadness: 14, joy: 14, fear: 12, anger: 12, surprise: 10,
+        calm: 20, disgust: 14, desperate: 12, trust: 16, curious: 16,
+        spark: 8, risk: 20, stage: 5, wake: 6,
+    };
+
+    function init() {
+        if (ctx) return;
+        try {
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) { return; }
+        master = ctx.createGain();
+        master.gain.value = 0.22;
+        const comp = ctx.createDynamicsCompressor();
+        master.connect(comp);
+        comp.connect(ctx.destination);
+
+        /* ambient bed: two detuned deep oscillators through a lowpass —
+           barely audible, breathes with the substrate */
+        ambFilter = ctx.createBiquadFilter();
+        ambFilter.type = "lowpass";
+        ambFilter.frequency.value = 160;
+        ambGain = ctx.createGain();
+        ambGain.gain.value = 0.0;
+        ambOsc1 = ctx.createOscillator();
+        ambOsc1.type = "triangle"; ambOsc1.frequency.value = 54;
+        ambOsc2 = ctx.createOscillator();
+        ambOsc2.type = "sine"; ambOsc2.frequency.value = 55.7;
+        ambOsc1.connect(ambFilter); ambOsc2.connect(ambFilter);
+        ambFilter.connect(ambGain); ambGain.connect(master);
+        ambOsc1.start(); ambOsc2.start();
+
+        /* speaking resonance: a sub-bass fifth under the TTS voice with a
+           slow amplitude wobble — the "transformer chest" */
+        spkGain = ctx.createGain(); spkGain.gain.value = 0.0;
+        spkOsc1 = ctx.createOscillator();
+        spkOsc1.type = "sine"; spkOsc1.frequency.value = 58;
+        spkOsc2 = ctx.createOscillator();
+        spkOsc2.type = "triangle"; spkOsc2.frequency.value = 87;
+        spkLfo = ctx.createOscillator(); spkLfo.frequency.value = 6.2;
+        spkLfoGain = ctx.createGain(); spkLfoGain.gain.value = 0.35;
+        const spkBase = ctx.createGain(); spkBase.gain.value = 0.65;
+        spkLfo.connect(spkLfoGain);
+        const spkMix = ctx.createGain();
+        spkOsc1.connect(spkMix); spkOsc2.connect(spkMix);
+        spkMix.connect(spkGain);
+        spkLfoGain.connect(spkGain.gain);   // wobble
+        spkGain.connect(master);
+        spkOsc1.start(); spkOsc2.start(); spkLfo.start();
+        void spkBase;
+    }
+
+    function resume() { if (ctx && ctx.state === "suspended") ctx.resume(); }
+
+    /* one enveloped voice: freq glide + gain envelope through a lowpass */
+    function tone(type, f0, f1, dur, peak, lpf, delay) {
+        if (!ctx || muted) return;
+        const t0 = ctx.currentTime + (delay || 0);
+        const o = ctx.createOscillator();
+        o.type = type;
+        o.frequency.setValueAtTime(f0, t0);
+        if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(f1, 20), t0 + dur);
+        const f = ctx.createBiquadFilter();
+        f.type = "lowpass"; f.frequency.value = lpf || 380;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(peak, t0 + dur * 0.25);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(f); f.connect(g); g.connect(master);
+        o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+
+    function allowed(name) {
+        if (!ctx || muted) return false;
+        const now = performance.now() / 1000;
+        if (lastCue[name] && now - lastCue[name] < (COOLDOWN[name] || 10)) return false;
+        cueLog = cueLog.filter(t => now - t < 60);
+        if (cueLog.length >= 6) return false;   // never more than 6 cues/min
+        lastCue[name] = now;
+        cueLog.push(now);
+        return true;
+    }
+
+    function cue(name) {
+        if (!allowed(name)) return;
+        switch (name) {
+            case "sadness":   // slow falling minor drone
+                tone("sine", 150, 92, 1.2, 0.10, 300, 0);
+                tone("sine", 200, 123, 1.2, 0.06, 300, 0.05); break;
+            case "joy":       // soft rising warm fifth
+                tone("sine", 90, 140, 0.8, 0.09, 500, 0);
+                tone("triangle", 135, 210, 0.8, 0.05, 500, 0.03); break;
+            case "fear":      // beating dissonance, low
+                tone("sine", 70, 70, 1.3, 0.09, 240, 0);
+                tone("sine", 74.5, 74.5, 1.3, 0.09, 240, 0); break;
+            case "anger":     // filtered growl burst
+                tone("sawtooth", 62, 48, 0.5, 0.10, 180, 0); break;
+            case "surprise":  // quick deep up-chirp
+                tone("sine", 80, 170, 0.28, 0.10, 600, 0); break;
+            case "calm":      // settling swell
+                tone("sine", 65, 60, 1.6, 0.07, 220, 0); break;
+            case "disgust":
+                tone("triangle", 95, 70, 0.7, 0.07, 260, 0); break;
+            case "desperate":
+                tone("sine", 110, 78, 0.9, 0.09, 280, 0);
+                tone("sine", 165, 117, 0.9, 0.05, 280, 0.08); break;
+            case "trust":
+                tone("sine", 82, 110, 1.0, 0.06, 320, 0); break;
+            case "curious":   // two small rising steps
+                tone("sine", 96, 121, 0.35, 0.07, 500, 0);
+                tone("sine", 121, 144, 0.35, 0.07, 500, 0.4); break;
+            case "spark":     // a concept lands — muted bell
+                tone("sine", 220, 219, 0.5, 0.08, 900, 0);
+                tone("sine", 440, 438, 0.35, 0.03, 1200, 0.01); break;
+            case "risk":      // ominous double pulse
+                tone("sine", 48, 47, 0.16, 0.11, 140, 0);
+                tone("sine", 48, 47, 0.16, 0.11, 140, 0.26); break;
+            case "stage":     // developmental milestone — ceremonial fifth
+                tone("sine", 55, 55, 2.0, 0.09, 200, 0);
+                tone("sine", 82.5, 82.5, 2.0, 0.07, 240, 0.15); break;
+            case "wake":      // about to speak unprompted
+                tone("sine", 70, 92, 0.6, 0.08, 300, 0); break;
+        }
+    }
+
+    function update(velNorm, arousal) {
+        if (!ctx || muted) return;
+        const t = ctx.currentTime;
+        ambGain.gain.setTargetAtTime(
+            0.05 + 0.10 * clamp(velNorm, 0, 1), t, 0.4);
+        ambFilter.frequency.setTargetAtTime(120 + arousal * 480, t, 0.6);
+    }
+
+    function setSpeaking(on) {
+        if (!ctx) return;
+        spkGain.gain.setTargetAtTime(on && !muted ? 0.055 : 0.0, ctx.currentTime, 0.12);
+    }
+
+    function setMuted(m) {
+        muted = m;
+        if (ctx) {
+            ambGain.gain.setTargetAtTime(m ? 0 : 0.05, ctx.currentTime, 0.1);
+            if (m) spkGain.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
+        }
+    }
+
+    return { init, resume, cue, update, setSpeaking, setMuted,
+             isMuted: () => muted, ready: () => !!ctx };
+})();
+
+/* ================= live state (targets fed by SSE, smoothed per frame) */
+const target = {
+    emotions: {}, dominant: "calm", color: EMO_COLORS.calm.slice(),
+    arousal: 0, attention: 1, busVel: 0, busNorm: 0,
+    continuity: 1, feltTime: 0, dilation: 1, stage: "newborn",
+    sparkNorm: 0, chem: {}, ticks: 0,
+};
+const smooth = {
+    color: EMO_COLORS.calm.slice(), busVel: 0, busNorm: 0,
+    arousal: 0, mouthAmp: 0.1, eyeOpen: 1, browTilt: 0, browLift: 0,
+};
+let speaking = false;
+let speakToken = 0;
+let lastSpokenText = "";
+let lastSpeechEndAt = 0;
+let sparkFlash = 0;
+let lastSparkNorm = 0;
+let prevDominant = "calm";
+let prevStage = null;
+
+function dominantEmotion(blend) {
+    let best = "calm", bestV = 0;
+    for (const e of EMOTIONS) {
+        const v = Math.max(0, blend[e] || 0);   // signed: negative = suppressed, never dominant
+        if (v > bestV) { bestV = v; best = e; }
+    }
+    return best;
+}
+
+/* ================= HUD ================= */
+function miniBars(el, values, names, colors, max) {
+    let html = "";
+    for (const n of names) {
+        const v = values[n] ?? 0;
+        const pct = clamp(Math.max(0, v) / max * 100, 0, 100);   // suppressed (negative) shows empty
+        const c = colors ? colors[n] : "#8be9fd";
+        html += `<div class="mini"><span class="name">${n}</span>
+            <span class="bar"><span class="fill" style="width:${pct}%;background:${c};box-shadow:0 0 5px ${c}"></span></span></div>`;
+    }
+    el.innerHTML = html;
+}
+
+const thoughtField = [];   // floating words around the head
+const seenThoughts = new Set();
+function spawnThought(text, kind) {
+    if (!text || text === "·") return;
+    const key = kind + ":" + text;
+    if (seenThoughts.has(key)) return;
+    seenThoughts.add(key);
+    setTimeout(() => seenThoughts.delete(key), 12000);
+    const a = Math.random() * Math.PI * 2;
+    thoughtField.push({
+        text, kind, born: performance.now(),
+        life: 7000 + Math.random() * 4000,
+        angle: a, dist: 1.35 + Math.random() * 0.25,
+        drift: 0.010 + Math.random() * 0.02,
+        wobble: Math.random() * Math.PI * 2,
+        size: kind === "future" ? 13 : 11,
+    });
+    if (thoughtField.length > 14) thoughtField.shift();
+}
+
+function applySnapshot(s) {
+    if (!s || s.error) return;
+    const blend = (s.limbic && s.limbic.blended) || {};
+    target.emotions = blend;
+    target.dominant = dominantEmotion(blend);
+    target.color = EMO_COLORS[target.dominant] || EMO_COLORS.calm;
+    target.chem = s.neuromod || {};
+    target.arousal = clamp((target.chem.arousal || 0) / 2, 0, 1);
+    target.attention = (s.salience && s.salience.gain) || 1;
+    target.busVel = (s.bus && s.bus.velocity_norm) || 0;
+    target.busNorm = (s.bus && s.bus.state_norm) || 0;
+    target.ticks = (s.bus && s.bus.tick_count) || 0;
+
+    const sm = s.self_model || {};
+    target.continuity = sm.continuity ?? 1;
+    target.feltTime = sm.felt_time ?? 0;
+    target.dilation = sm.dilation ?? 1;
+    target.stage = (s.abstraction && s.abstraction.stage) || "newborn";
+
+    const spN = (s.sparks && s.sparks.spark_norm) || 0;
+    if (spN > lastSparkNorm + 0.05) { sparkFlash = 1.0; AudioFX.cue("spark"); }
+    lastSparkNorm = spN;
+
+    /* the drone language — sounds only on significant, real transitions */
+    AudioFX.update(clamp(target.busVel, 0, 1), target.arousal);
+    const domVal = Math.max(0, blend[target.dominant] || 0);
+    if (target.dominant !== prevDominant && domVal > 0.35) {
+        AudioFX.cue(target.dominant);
+        prevDominant = target.dominant;
+    } else if (target.dominant === prevDominant) {
+        prevDominant = target.dominant;
+    }
+    if (prevStage !== null && target.stage !== prevStage) AudioFX.cue("stage");
+    prevStage = target.stage;
+
+    /* HUD text */
+    document.getElementById("h-stage").textContent = target.stage.toUpperCase();
+    document.getElementById("h-cont").style.width =
+        `${clamp((target.continuity + 1) / 2 * 100, 0, 100)}%`;
+    document.getElementById("h-felt").textContent = target.feltTime.toFixed(0);
+    document.getElementById("h-dil").textContent = "×" + target.dilation.toFixed(2);
+    document.getElementById("h-ticks").textContent = target.ticks;
+    const wallS = (s.bus && s.bus.wall_seconds) || 0;
+    document.getElementById("h-hz").textContent =
+        wallS > 0 ? (target.ticks / wallS).toFixed(1) : "—";
+
+    miniBars(document.getElementById("h-emotions"), blend, EMOTIONS,
+        Object.fromEntries(EMOTIONS.map(e => [e, `rgb(${EMO_COLORS[e]})`])), 1.0);
+    miniBars(document.getElementById("h-chem"), target.chem, CHEM, CHEM_COLORS, 2.0);
+
+    const spec = s.speculative || {};
+    let fh = "";
+    for (const f of (spec.futures || [])) {
+        fh += `<div class="future-row${f.chosen ? " chosen" : ""}">
+            <span class="u">${(f.utility ?? 0).toFixed(2)}</span>
+            <span class="w">${escapeHtml(f.word || "·")}</span></div>`;
+        if (f.chosen) {
+            spawnThought(f.word, "future");
+            if ((f.risk ?? 0) > 0.3) AudioFX.cue("risk");
+        }
+    }
+    document.getElementById("h-futures").innerHTML = fh ||
+        '<div class="future-row"><span class="w" style="color:var(--hud-dim)">imagining…</span></div>';
+    const pen = (spec.penumbra || []).map(p => escapeHtml(p.word)).join(" · ");
+    document.getElementById("h-penumbra").textContent = pen || "—";
+    for (const p of (spec.penumbra || [])) spawnThought(p.word, "penumbra");
+
+    const sub = s.subconscious || {};
+    if (sub.intrusive_word) spawnThought(sub.intrusive_word, "intrusive");
+
+    /* being reminded — latent recall from the engine */
+    const rec = s.recall;
+    document.getElementById("h-recall").textContent = rec
+        ? `${rec.false ? "≈ " : ""}${(rec.tag || "—").slice(0, 34)}`
+        : "—";
+
+    for (const msg of (s.autonomous || [])) {
+        AudioFX.cue("wake");
+        showCaption(msg, "UNPROMPTED");
+        speakText(msg);
+    }
+}
+
+function escapeHtml(x) {
+    return String(x).replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+}
+
+/* ================= SSE ================= */
+function connect() {
+    const es = new EventSource("/api/stream");
+    es.onmessage = ev => {
+        let s = null;
+        try { s = JSON.parse(ev.data); } catch (e) {}
+        const live = document.getElementById("live-state");
+        if (!s || s.error) {                       // error payload ≠ alive
+            live.textContent = "● ERROR";
+            live.style.color = "#f7768e";
+            live.style.textShadow = "0 0 8px #f7768e";
+            isLive = false;
+            return;
+        }
+        live.textContent = "● ALIVE";
+        live.style.color = "";
+        live.style.textShadow = "";
+        isLive = true;
+        lastSnapAt = performance.now();
+        applySnapshot(s);
+    };
+    es.onerror = () => {
+        const live = document.getElementById("live-state");
+        live.textContent = "● OFFLINE";
+        live.style.color = "";
+        live.style.textShadow = "";
+        isLive = false;
+        es.close();
+        setTimeout(connect, 3000);
+    };
+}
+connect();
+
+/* ================= captions + TTS ================= */
+let captionTimer = null;
+function showCaption(text, tag) {
+    const cap = document.getElementById("caption");
+    clearInterval(captionTimer);
+    const head = tag ? `<span class="tag">${tag}</span>` : "";
+    let i = 0;
+    captionTimer = setInterval(() => {
+        i += 2;
+        cap.innerHTML = head + escapeHtml(text.slice(0, i)) +
+            (i < text.length ? "▌" : "");
+        if (i >= text.length) clearInterval(captionTimer);
+    }, 34);
+}
+
+let voice = null;
+function pickVoice() {
+    const vs = speechSynthesis.getVoices();
+    if (!vs.length) return;
+    const en = vs.filter(v => /en[-_]/i.test(v.lang));
+    // Deepest-sounding male voices first; pitch 0.6 does the rest.
+    const MALE = /guy|davis|christopher|eric|andrew|brian|david|mark|james|ryan|male/i;
+    voice = en.find(v => /natural|neural/i.test(v.name) && MALE.test(v.name))
+         || en.find(v => MALE.test(v.name))
+         || en.find(v => /natural|neural/i.test(v.name))
+         || en[0] || vs[0];
+}
+if ("speechSynthesis" in window) {
+    pickVoice();
+    speechSynthesis.onvoiceschanged = pickVoice;
+}
+
+function speakText(text) {
+    if (!("speechSynthesis" in window) || !text) return;
+    stopListening();                       // never hear ourselves
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    if (voice) u.voice = voice;
+    const e = target.emotions;
+    // Deep transformer register: pitch centered at 0.6, emotions bend it
+    // around that floor rather than lifting it to human-neutral.
+    u.pitch = clamp(0.60
+        + 0.22 * (e.joy || 0) + 0.28 * (e.surprise || 0)
+        + 0.18 * (e.fear || 0) - 0.22 * (e.sadness || 0)
+        - 0.08 * (e.calm || 0), 0.35, 1.05);
+    u.rate = clamp(0.92
+        + 0.28 * target.arousal + 0.18 * (e.fear || 0)
+        + 0.08 * (e.joy || 0) - 0.22 * (e.sadness || 0)
+        - 0.08 * (e.calm || 0), 0.6, 1.35);
+    // Set synchronously so sendMessage's resume logic can't race the
+    // utterance's async onstart.
+    speaking = true;
+    lastSpokenText = text;
+    AudioFX.setSpeaking(true);   // sub-bass chest resonance under the voice
+    updateMicUI();
+    const token = ++speakToken;
+    const done = () => {
+        if (token !== speakToken) return;   // superseded by a newer utterance
+        speakToken++;
+        speaking = false;
+        lastSpeechEndAt = performance.now();
+        AudioFX.setSpeaking(false);
+        updateMicUI();
+        // Hands-free session: the AI finished talking — your turn again.
+        // Generous delay: speaker audio can lag the synth-end event.
+        if (handsFree) setTimeout(() => startListening(), 600);
+    };
+    u.onend = done;
+    u.onerror = done;
+    // Watchdog: Chrome occasionally never fires onend — don't let the
+    // session hang forever. Generous budget (slowest voice ≈140ms/char).
+    setTimeout(done, Math.min(90000, 4000 + text.length * 200));
+    speechSynthesis.speak(u);
+}
+
+/* ================= conversation ================= */
+let busy = false;
+async function sendMessage(text) {
+    text = (text || "").trim();
+    if (!text || busy) return;
+    busy = true;
+    showCaption("…", "THINKING");
+    try {
+        const r = await fetch("/api/talk", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text }),
+        });
+        const d = await r.json();
+        if (!r.ok) { showCaption(d.error || "connection failed", "ERROR"); return; }
+        showCaption(d.response, null);
+        speakText(d.response);
+        if (d.state) applySnapshot(d.state);
+    } catch (err) {
+        showCaption(String(err), "ERROR");
+    } finally {
+        busy = false;
+        updateMicUI();
+        // Session mode: if no speech took over (error reply, TTS missing),
+        // hand the mic back to the user.
+        if (handsFree && !speaking && !listening) {
+            setTimeout(() => {
+                if (handsFree && !speaking && !listening && !busy) startListening();
+            }, 300);
+        }
+    }
+}
+
+document.getElementById("send").addEventListener("click", () => {
+    const inp = document.getElementById("text-in");
+    sendMessage(inp.value); inp.value = "";
+});
+document.getElementById("text-in").addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+        e.preventDefault();
+        sendMessage(e.target.value); e.target.value = "";
+    }
+});
+
+/* ================= speech recognition (voice in) =================
+   Click the mic once to open a hands-free voice session (like ChatGPT
+   voice mode): it listens, sends what you said, pauses while the AI
+   thinks and speaks, then automatically listens again — until you click
+   the mic off. Holding SPACE still works as one-shot push-to-talk. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false, handsFree = false;
+const micBtn = document.getElementById("mic");
+const sttStatus = document.getElementById("stt-status");
+
+function updateMicUI() {
+    micBtn.classList.toggle("listening", listening);
+    micBtn.classList.toggle("paused", handsFree && !listening);
+    if (!rec) return;
+    if (handsFree) {
+        sttStatus.textContent = listening
+            ? "LISTENING — CLICK THE MIC TO END THE SESSION"
+            : (speaking ? "SPEAKING — CLICK THE MIC TO END THE SESSION"
+                        : "THINKING — CLICK THE MIC TO END THE SESSION");
+    } else {
+        sttStatus.textContent = "CLICK THE MIC FOR A VOICE SESSION · HOLD [SPACE] TO TALK ONCE";
+    }
+}
+
+if (SR) {
+    rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = false;   // one utterance per cycle; the session loop restarts it
+    rec.onresult = ev => {
+        let interim = "", final = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+            const t = ev.results[i][0].transcript;
+            if (ev.results[i].isFinal) final += t; else interim += t;
+        }
+        document.getElementById("interim").textContent =
+            interim ? "hearing: " + interim : "";
+        if (final && final.trim()) {
+            document.getElementById("interim").textContent = "";
+            if (isEcho(final)) return;   // it heard its own voice — drop it
+            sendMessage(final);
+        }
+    };
+    rec.onend = () => {
+        listening = false;
+        updateMicUI();
+        // Session mode: recognition ends after every utterance or silence
+        // stretch — restart it unless the AI has the floor or we're mid-send.
+        if (handsFree && !speaking && !busy) {
+            setTimeout(() => {
+                if (handsFree && !speaking && !busy && !listening) startListening();
+            }, 250);
+        }
+    };
+    rec.onerror = ev => {
+        listening = false;
+        if (ev.error === "not-allowed") {
+            handsFree = false;
+            sttStatus.textContent = "MICROPHONE PERMISSION DENIED";
+            micBtn.classList.remove("listening", "paused");
+            return;
+        }
+        updateMicUI();  // transient errors (no-speech etc.) — onend will retry
+    };
+    updateMicUI();
+} else {
+    micBtn.disabled = true;
+    sttStatus.textContent = "VOICE INPUT NEEDS CHROME OR EDGE — TEXT STILL WORKS";
+}
+
+function isEcho(text) {
+    // Transcripts arriving during or shortly after our own speech that
+    // mostly overlap what we just said are the microphone hearing the
+    // speakers, not the user.
+    if (!lastSpokenText) return false;
+    if (!speaking && performance.now() - lastSpeechEndAt > 6000) return false;
+    const words = s => new Set(
+        s.toLowerCase().split(/[^a-z0-9']+/).filter(w => w.length > 2));
+    const heard = words(text), said = words(lastSpokenText);
+    if (!heard.size) return false;
+    let hit = 0;
+    for (const w of heard) if (said.has(w)) hit++;
+    return hit / heard.size > 0.6;
+}
+
+function startListening(manual) {
+    if (!rec || listening || busy) return;
+    if (speaking) {
+        if (!manual) return;              // never auto-listen over our own voice
+        speechSynthesis && speechSynthesis.cancel();  // manual barge-in
+        speaking = false;
+    }
+    try { rec.start(); } catch (e) { updateMicUI(); return; }
+    listening = true;
+    updateMicUI();
+}
+function stopListening() {
+    if (rec && listening) { try { rec.stop(); } catch (e) {} }
+}
+function endSession() {
+    handsFree = false;
+    stopListening();
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    speaking = false;
+    updateMicUI();
+}
+micBtn.addEventListener("click", () => {
+    if (handsFree) { endSession(); return; }
+    handsFree = true;
+    startListening(true);
+});
+window.addEventListener("keydown", e => {
+    if (e.code === "Space" && document.activeElement !== document.getElementById("text-in")) {
+        e.preventDefault();
+        if (!listening) startListening(true);
+    }
+});
+window.addEventListener("keyup", e => {
+    if (e.code === "Space" && document.activeElement !== document.getElementById("text-in")) {
+        if (!handsFree) stopListening();
+    }
+});
+
+/* audio needs a user gesture — arm on any interaction */
+window.addEventListener("pointerdown", () => {
+    AudioFX.init();
+    AudioFX.resume();
+});
+window.addEventListener("keydown", () => {
+    AudioFX.init();
+    AudioFX.resume();
+});
+document.getElementById("mute").addEventListener("click", () => {
+    AudioFX.init();
+    const m = !AudioFX.isMuted();
+    AudioFX.setMuted(m);
+    document.getElementById("mute").classList.toggle("off", m);
+});
+
+/* ================= the face ================= */
+const cv = document.getElementById("scene");
+const ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = W * DPR; cv.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* starfield deleted (Era 8): pure Math.random twinkle implying
+   activity that wasn't there — bind or remove, it lost. */
+
+/* liveness gate: motion runs only against a live stream. Presence
+   motion reads motionTime, which freezes when the stream goes stale. */
+let isLive = false, lastSnapAt = 0, motionGate = 0, motionTime = 0;
+let irisRot = 0;                 // accumulated ∝ attention (no base spin)
+const ringAcc = [0, 0, 0];       // ring angles accumulate ∝ bus velocity
+
+/* orbiting particles */
+const particles = Array.from({ length: 84 }, () => ({
+    a: Math.random() * Math.PI * 2,
+    r: 1.18 + Math.random() * 1.0,          // in units of R
+    sp: (0.08 + Math.random() * 0.25) * (Math.random() < 0.5 ? 1 : -1),
+    squash: 0.35 + Math.random() * 0.5,
+    tilt: Math.random() * Math.PI,
+    size: 0.6 + Math.random() * 1.6,
+}));
+
+/* rings */
+const rings = Array.from({ length: 3 }, (_, i) => ({
+    r: 1.32 + i * 0.17,
+    a0: Math.random() * Math.PI * 2,
+    len: 0.5 + Math.random() * 1.3,
+    sp: (0.10 + 0.09 * i) * (i % 2 ? -1 : 1),
+}));
+
+/* eyes / gaze / blink state */
+let gazeX = 0, gazeY = 0, gazeTX = 0, gazeTY = 0, nextGaze = 0;
+let blink = 1, nextBlink = 2000, blinkPhase = 0;
+let mouseX = null, mouseY = null, mouseAt = 0;
+let panX = 0, panY = 0;   // parallax — the head subtly faces you
+window.addEventListener("mousemove", e => {
+    mouseX = e.clientX; mouseY = e.clientY; mouseAt = performance.now();
+});
+
+/* hex-plate skin — tech dermis shimmering inside the faceplate */
+const hexPts = [];
+{
+    const s = 0.15;
+    for (let r = -7; r <= 7; r++) {
+        for (let q = -7; q <= 7; q++) {
+            const x = s * (q + (Math.abs(r) % 2 ? 0.5 : 0));
+            const y = s * r * 0.866;
+            if (Math.hypot(x, y) < 0.88) {
+                hexPts.push({ x, y, ph: Math.random() * 6.283,
+                              sp: 0.4 + Math.random() * 0.8 });
+            }
+        }
+    }
+}
+function hexPath(cx, cy, r) {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 6 + i * Math.PI / 3;
+        const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+}
+
+/* angular helmet faceplate, in unit-radius coordinates */
+const PLATE = [
+    [-1.04, -0.20], [-0.97, 0.45], [-0.58, 0.98], [-0.20, 1.14],
+    [0.20, 1.14], [0.58, 0.98], [0.97, 0.45], [1.04, -0.20],
+    [0.74, -1.00], [0.26, -1.16], [-0.26, -1.16], [-0.74, -1.00],
+];
+
+function rgba(c, a) { return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`; }
+
+function draw(now) {
+    requestAnimationFrame(draw);
+    const t = now / 1000;
+    const dt = 1 / 60;
+
+    /* the liveness gate: no fresh snapshot in 4s = the face stops
+       performing; presence motion reads the gated clock mt */
+    const fresh = isLive && (now - lastSnapAt < 4000);
+    motionGate = lerp(motionGate, fresh ? 1 : 0, 0.08);
+    motionTime += dt * motionGate;
+    const mt = motionTime;
+
+    /* smooth toward targets */
+    for (let i = 0; i < 3; i++)
+        smooth.color[i] = lerp(smooth.color[i], target.color[i], 0.04);
+    if (motionGate < 0.98) {          // offline: the face greys out
+        const grey = (smooth.color[0] + smooth.color[1] + smooth.color[2]) / 3;
+        for (let i = 0; i < 3; i++)
+            smooth.color[i] = lerp(smooth.color[i], grey, (1 - motionGate) * 0.10);
+    }
+    smooth.busVel = lerp(smooth.busVel, clamp(target.busVel, 0, 2), 0.06);
+    smooth.busNorm = lerp(smooth.busNorm, clamp(target.busNorm, 0, 8), 0.05);
+    smooth.arousal = lerp(smooth.arousal, target.arousal, 0.04);
+
+    const e = target.emotions;
+    const fearSurprise = Math.max(0, (e.surprise || 0)) + Math.max(0, (e.fear || 0));
+    const anger = Math.max(0, e.anger || 0);
+    const sad = Math.max(0, e.sadness || 0);
+    smooth.eyeOpen = lerp(smooth.eyeOpen,
+        clamp(1 + 0.55 * fearSurprise - 0.25 * Math.max(0, e.calm || 0) - 0.3 * sad, 0.55, 1.6),
+        0.08);
+    smooth.browTilt = lerp(smooth.browTilt, anger * 0.7 - sad * 0.45, 0.07);
+    smooth.browLift = lerp(smooth.browLift, fearSurprise * 0.6 - anger * 0.3, 0.07);
+
+    /* mouth amplitude: speaking state or bus velocity — nothing else.
+       The old sin-product "envelope" was fabrication (browser TTS
+       exposes no amplitude), and the old 0.07 idle base wiggled at
+       zero signal. Both gone. */
+    const mouthTarget = speaking ? 0.55
+        : clamp(smooth.busVel, 0, 1) * 0.22;
+    smooth.mouthAmp = lerp(smooth.mouthAmp, mouthTarget, speaking ? 0.25 : 0.05);
+
+    const C = smooth.color;
+
+    /* ---- background ---- */
+    ctx.clearRect(0, 0, W, H);
+    const bgg = ctx.createRadialGradient(W / 2, H * 0.42, 0, W / 2, H * 0.42, Math.max(W, H) * 0.8);
+    bgg.addColorStop(0, "#070b12");
+    bgg.addColorStop(1, "#020307");
+    ctx.fillStyle = bgg;
+    ctx.fillRect(0, 0, W, H);
+
+    /* ---- head geometry (with parallax — it subtly faces you) ---- */
+    const tgtPanX = mouseX !== null ? ((mouseX - W / 2) / W) * 14 : 0;
+    const tgtPanY = mouseY !== null ? ((mouseY - H * 0.42) / H) * 10 : 0;
+    panX = lerp(panX, tgtPanX * motionGate, 0.04);   // no parallax offline
+    panY = lerp(panY, tgtPanY * motionGate, 0.04);
+    const cx = W / 2 + panX, cy = H * 0.42 + panY;
+    const breathRate = 0.9 + smooth.arousal * 1.8;   // presence motion
+    const breath = 1 + 0.028 * Math.sin(mt * breathRate * 2 * Math.PI / 4);
+    const R = Math.min(W, H) * 0.21 * (0.94 + 0.07 * clamp(smooth.busNorm / 5, 0, 1)) * breath;
+
+    /* aura */
+    const aura = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 2.4);
+    aura.addColorStop(0, rgba(C, 0.20 + 0.10 * smooth.arousal));
+    aura.addColorStop(0.55, rgba(C, 0.05));
+    aura.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = aura;
+    ctx.fillRect(0, 0, W, H);
+
+    /* spark flash — a concept just struck */
+    if (sparkFlash > 0.01) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.strokeStyle = rgba([255, 255, 230], sparkFlash * 0.7);
+        ctx.lineWidth = 1.4;
+        for (let i = 0; i < 7; i++) {
+            const a = (i / 7) * Math.PI * 2 + mt * 0.4;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(a) * R * 1.05, Math.sin(a) * R * 1.05);
+            ctx.lineTo(Math.cos(a) * R * (1.5 + sparkFlash * 0.7),
+                       Math.sin(a) * R * (1.5 + sparkFlash * 0.7));
+            ctx.stroke();
+        }
+        ctx.restore();
+        sparkFlash *= 0.90;
+    }
+
+    /* rotating rings — angle accumulates ∝ bus velocity only (the old
+       base speed spun them at zero signal) */
+    ctx.save();
+    ctx.translate(cx, cy);
+    rings.forEach((ring, ri) => {
+        ringAcc[ri] += ring.sp * smooth.busVel * 1.6 * dt * motionGate;
+        const a0 = ring.a0 + ringAcc[ri];
+        ctx.beginPath();
+        ctx.arc(0, 0, R * ring.r, a0, a0 + ring.len);
+        ctx.strokeStyle = rgba(C, 0.35);
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+    });
+    ctx.restore();
+
+    /* orbiting particles — subconscious traffic. Speed and jitter are
+       signal (bus velocity + reward, stress); zero signal = stillness */
+    const rew = clamp((target.chem.reward || 0) / 2, 0, 1);
+    const stress = clamp((target.chem.stress || 0) / 2, 0, 1);
+    const psp = smooth.busVel * 2.2 + rew * 1.2;
+    for (const p of particles) {
+        p.a += p.sp * psp * dt * motionGate;
+        const jx = (Math.random() - 0.5) * stress * 3.5 * motionGate;
+        const jy = (Math.random() - 0.5) * stress * 3.5 * motionGate;
+        const ex = Math.cos(p.a) * R * p.r;
+        const ey = Math.sin(p.a) * R * p.r * p.squash;
+        const x = cx + ex * Math.cos(p.tilt) - ey * Math.sin(p.tilt) + jx;
+        const y = cy + ex * Math.sin(p.tilt) + ey * Math.cos(p.tilt) + jy;
+        const depth = 0.5 + 0.5 * Math.sin(p.a);
+        ctx.fillStyle = rgba(C, 0.10 + 0.45 * depth * (0.5 + rew * 0.5));
+        ctx.beginPath();
+        ctx.arc(x, y, p.size * (0.6 + depth * 0.7), 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    /* thought words drifting out of the subconscious */
+    const nowMs = performance.now();
+    for (let i = thoughtField.length - 1; i >= 0; i--) {
+        const th = thoughtField[i];
+        const age = nowMs - th.born;
+        if (age > th.life) { thoughtField.splice(i, 1); continue; }
+        const k = age / th.life;
+        th.dist += th.drift * dt * motionGate;
+        const wob = Math.sin(mt * 0.7 + th.wobble) * 0.05;
+        const x = cx + Math.cos(th.angle + wob) * R * th.dist;
+        const y = cy + Math.sin(th.angle + wob) * R * th.dist * 0.8;
+        const a = Math.sin(Math.PI * k) *
+            (th.kind === "future" ? 0.55 : th.kind === "intrusive" ? 0.5 : 0.3);
+        ctx.font = `${th.size}px Consolas, monospace`;
+        ctx.fillStyle = th.kind === "penumbra"
+            ? `rgba(187,154,247,${a})` : rgba(C, a);
+        ctx.textAlign = "center";
+        ctx.fillText(th.text, x, y);
+    }
+
+    /* core face disc */
+    const core = ctx.createRadialGradient(cx, cy, R * 0.1, cx, cy, R);
+    core.addColorStop(0, rgba(C, 0.10));
+    core.addColorStop(0.75, "rgba(6,9,15,0.88)");
+    core.addColorStop(1, "rgba(6,9,15,0.2)");
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.fill();
+    /* chromatic fringe deleted (Era 8): CRT-hologram cosplay */
+    ctx.strokeStyle = rgba(C, 0.5);
+    ctx.lineWidth = 1.4;
+    ctx.shadowColor = rgba(C, 0.9);
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    /* hex-plate dermis — shimmer rate is bus velocity ONLY (the old
+       0.6 base shimmered at zero signal); static skin when still */
+    ctx.lineWidth = 0.7;
+    const hexR = R * 0.052;
+    for (const hp of hexPts) {
+        const a = 0.03 + 0.05 * (0.5 + 0.5 * Math.sin(mt * hp.sp * smooth.busVel * 1.6 + hp.ph));
+        ctx.strokeStyle = rgba(C, a);
+        hexPath(cx + hp.x * R, cy + hp.y * R, hexR);
+        ctx.stroke();
+    }
+
+    /* angular helmet faceplate */
+    ctx.beginPath();
+    PLATE.forEach(([ux, uy], i) => {
+        const x = cx + ux * R * 1.06, y = cy + uy * R * 1.06;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.strokeStyle = rgba(C, 0.55);
+    ctx.lineWidth = 1.6;
+    ctx.shadowColor = rgba(C, 0.8);
+    ctx.shadowBlur = 12;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(10,14,20,0.9)";
+    ctx.lineWidth = 4.5;
+    ctx.globalCompositeOperation = "destination-over";
+    ctx.stroke();
+    ctx.globalCompositeOperation = "source-over";
+
+    /* chin chevron */
+    ctx.strokeStyle = rgba(C, 0.5);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(cx - R * 0.20, cy + R * 1.02);
+    ctx.lineTo(cx, cy + R * 1.15);
+    ctx.lineTo(cx + R * 0.20, cy + R * 1.02);
+    ctx.stroke();
+
+    /* forehead crest — three stacked arcs */
+    for (let i = 0; i < 3; i++) {
+        ctx.strokeStyle = rgba(C, 0.35 - i * 0.09);
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.arc(cx, cy - R * 0.15, R * (0.62 + i * 0.10),
+                -Math.PI / 2 - 0.42, -Math.PI / 2 + 0.42);
+        ctx.stroke();
+    }
+
+    /* cheek vents — pulse while it speaks */
+    const ventA = 0.18 + smooth.mouthAmp * 0.5;
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = "round";
+    for (const side of [-1, 1]) {
+        for (let i = 0; i < 3; i++) {
+            ctx.strokeStyle = rgba(C, ventA - i * 0.04);
+            ctx.beginPath();
+            ctx.moveTo(cx + side * R * (0.60 + i * 0.09), cy + R * (0.30 + i * 0.05));
+            ctx.lineTo(cx + side * R * (0.78 + i * 0.09), cy + R * (0.52 + i * 0.05));
+            ctx.stroke();
+        }
+    }
+
+    /* scan sweep deleted (Era 8): a "sensor line" bound to a pure
+       timer — it sensed nothing */
+
+    /* ---- gaze (presence motion — scheduled only while live) ---- */
+    if (fresh && now > nextGaze) {
+        nextGaze = now + 1400 + Math.random() * 2600;
+        if (mouseX !== null && now - mouseAt < 4000) {
+            gazeTX = clamp((mouseX - cx) / (W / 2), -1, 1) * 0.5;
+            gazeTY = clamp((mouseY - cy) / (H / 2), -1, 1) * 0.4;
+        } else {
+            gazeTX = (Math.random() - 0.5) * 0.8;
+            gazeTY = (Math.random() - 0.5) * 0.5;
+        }
+    }
+    gazeX = lerp(gazeX, gazeTX, 0.05);
+    gazeY = lerp(gazeY, gazeTY, 0.05);
+
+    /* ---- blink (presence motion — scheduled only while live) ---- */
+    if (fresh && now > nextBlink && blinkPhase === 0) blinkPhase = 1;
+    if (blinkPhase === 1) { blink -= 0.22; if (blink <= 0.06) blinkPhase = 2; }
+    else if (blinkPhase === 2) {
+        blink += 0.16;
+        if (blink >= 1) {
+            blink = 1; blinkPhase = 0;
+            nextBlink = now + 1800 + Math.random() * 4200
+                - smooth.arousal * 1200;      // aroused = blinks more often
+        }
+    }
+
+    /* ---- eyes ---- */
+    const eyeY = cy - R * 0.18 + gazeY * R * 0.07;
+    const eyeDX = R * 0.42;
+    const eyeRx = R * 0.155;
+    const eyeRy = R * 0.155 * smooth.eyeOpen * blink;
+    const pupilR = eyeRx * clamp(0.42 - smooth.arousal * 0.12
+        + Math.max(0, (e.calm || 0)) * 0.10, 0.2, 0.55);
+
+    for (const side of [-1, 1]) {
+        const ex = cx + side * eyeDX + gazeX * R * 0.09;
+        /* housing ring */
+        ctx.strokeStyle = rgba(C, 0.4);
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.arc(ex, eyeY, eyeRx * 1.28, 0, Math.PI * 2);
+        ctx.stroke();
+        /* glow lens */
+        ctx.shadowColor = rgba(C, 1);
+        ctx.shadowBlur = 26;
+        ctx.fillStyle = rgba([C[0] * 0.55 + 115, C[1] * 0.55 + 115, C[2] * 0.55 + 115], 0.95);
+        ctx.beginPath();
+        ctx.ellipse(ex, eyeY, eyeRx, Math.max(eyeRy, eyeRx * 0.04), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        if (eyeRy > eyeRx * 0.12) {
+            const ix = ex + gazeX * eyeRx * 0.45;
+            const iy = eyeY + gazeY * eyeRy * 0.4;
+            /* segmented iris — rotation rate ∝ attention ONLY (the old
+               0.35 base spun it forever at zero salience) */
+            const segs = 6;
+            if (side === -1)   // accumulate once per frame
+                irisRot += clamp(target.attention, 0, 2) * 0.45 * dt * motionGate;
+            const rot = irisRot * side;
+            ctx.strokeStyle = "rgba(6,10,16,0.85)";
+            ctx.lineWidth = Math.max(1.4, pupilR * 0.24);
+            for (let sgi = 0; sgi < segs; sgi++) {
+                const a0 = rot + (sgi / segs) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.arc(ix, iy, pupilR * 1.55, a0, a0 + (Math.PI * 2 / segs) * 0.62);
+                ctx.stroke();
+            }
+            /* hex pupil */
+            ctx.fillStyle = "rgba(5,8,14,0.92)";
+            hexPath(ix, iy, pupilR);
+            ctx.fill();
+            ctx.fillStyle = rgba(C, 0.85);
+            ctx.beginPath();
+            ctx.arc(ix, iy, pupilR * 0.32, 0, Math.PI * 2);
+            ctx.fill();
+            /* specular glint */
+            ctx.fillStyle = "rgba(255,255,255,0.5)";
+            ctx.beginPath();
+            ctx.arc(ix - pupilR * 0.35, iy - pupilR * 0.4, pupilR * 0.12, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        /* brow */
+        const bw = eyeRx * 1.5;
+        const by = eyeY - eyeRx * (1.5 + smooth.browLift * 0.8);
+        const tiltIn = smooth.browTilt * eyeRx * 0.8;
+        ctx.strokeStyle = rgba(C, 0.75);
+        ctx.lineWidth = 2.2;
+        ctx.lineCap = "round";
+        ctx.shadowColor = rgba(C, 0.8);
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        // inner end (toward center) drops with anger, lifts with sadness
+        ctx.moveTo(ex - side * bw * 0.5, by + tiltIn);
+        ctx.lineTo(ex + side * bw * 0.5, by - tiltIn * 0.4);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    /* ---- oscilloscope mouth ---- */
+    const mw = R * 1.15, mx0 = cx - mw / 2, my = cy + R * 0.48;
+    const A = smooth.mouthAmp * R * 0.17;
+    const smile = (Math.max(0, e.joy || 0) - sad) * R * 0.07;
+    const N = 96;
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+        const u = i / N;
+        const win = Math.sin(Math.PI * u);
+        const y = my
+            + smile * (0.25 - (u - 0.5) * (u - 0.5)) * 4     // joy → ∪ smile, sadness → ∩
+            + (Math.sin(u * 14 + mt * 8.3) * 0.55            // stylized waveform;
+             + Math.sin(u * 31 - mt * 13.7) * 0.30           // amplitude A is the
+             + Math.sin(u * 53 + mt * 21.1) * 0.15) * A * win;  // only signal
+        const x = mx0 + u * mw;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = rgba(C, 0.9);
+    ctx.lineWidth = 2;
+    ctx.shadowColor = rgba(C, 1);
+    ctx.shadowBlur = 16;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(240,250,255,0.5)";
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+}
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

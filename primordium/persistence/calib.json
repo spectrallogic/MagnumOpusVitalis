@@ -1,0 +1,8 @@
+{
+ "v": 1,
+ "alg": "pbkdf2-sha256/200k+hmac-ctr+etm",
+ "salt": "NvdW5RSIVBKlmT0q4KWXtg==",
+ "nonce": "xPCopioMnU6j6PVZKmhujQ==",
+ "ct": "/qpIGYVGBWwxgRuEgdpLp8c3mDkfnQbbv0btJIUGP6khUu/kNO9OdHJ9",
+ "tag": "n7gwGAUkh5/YPQpD6gRLAGNF6EUSg/azS/NUkiDwzVo="
+}

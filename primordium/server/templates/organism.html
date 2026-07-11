@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PRIMORDIUM — {{ run_name }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='organism.css') }}">
+</head>
+<body data-ws-port="{{ ws_port }}">
+
+<canvas id="plasma" class="hidden"></canvas>
+<div class="vignette"></div>
+
+<!-- PULSE: the primary view. Every block is one real computation,
+     drained from the organism's event ring — nothing decorative. -->
+<div id="pulse-panel">
+    <canvas id="pulse"></canvas>
+    <div id="pulse-tip"></div>
+</div>
+
+<div id="perm-overlay">
+    <div class="perm-card">
+        <h1>PRIMORDIUM</h1>
+        <p>An artificial infant organism. It learns online from what it
+        sees and hears — starting from nothing. Everything runs locally;
+        nothing leaves this machine.</p>
+        <button id="grant">GIVE IT EYES AND EARS</button>
+        <button id="watch-only" class="ghost">watch only</button>
+    </div>
+</div>
+
+<div class="hud tl">
+    <div class="title">PRIMORDIUM · <span id="h-run">{{ run_name }}</span></div>
+    <div class="label">STAGE <span class="value" id="h-stage">0</span> ·
+        <span class="value" id="h-acuity">8x8 gray</span></div>
+    <div class="label">TICK <span class="value" id="h-tick">0</span> @
+        <span class="value" id="h-hz">0</span>Hz</div>
+    <div class="label" title="the core grows when measured learning saturates; hover shows the capacity gates">CORE
+        <span class="value" id="h-core">—</span> ·
+        BLOOMS <span class="value" id="h-blooms">0</span></div>
+    <div class="label" title="lifetime attention: banked moments the present can lean on; gain is measured by re-living the same tick without memory">REACH
+        <span class="value" id="h-reach">0</span> memories ·
+        GAIN <span class="value" id="h-reach-gain">—</span></div>
+    <div class="label" title="many cheap eyes: one deviation-watcher per stream, spiking only against its own history; a non-visual spike releases the fovea">WATCH
+        <span class="value" id="h-watch">0</span> spikes ·
+        WHEEL <span class="value" id="h-wheel">—</span></div>
+    <div class="label" title="the hand on trial: canvas prediction error with paint efference erased vs true, on the same lived window — ratio > 1 means its own hand measurably matters to what it expects">GRIP
+        <span class="value" id="h-grip">—</span></div>
+    <div class="label" title="every substrate write is signed with its source, kind, and norm — hover for the full ledger">PROVENANCE
+        <span class="value" id="h-prov">—</span></div>
+    <div class="label">FELT <span class="value" id="h-felt">0</span>s ·
+        DILATION <span class="value" id="h-dil">1.0</span></div>
+    <div class="label">SLEEP <span class="value" id="h-sleep">awake</span> ·
+        PRESSURE <span class="value" id="h-spress">0</span></div>
+    <div class="label">KINSHIP <span class="value" id="h-kin">0.00</span> ·
+        ANCHORS <span class="value" id="h-anchors">0</span></div>
+    <div class="label">GROWTH GATES</div>
+    <div id="h-gates"></div>
+</div>
+
+<div class="hud tr">
+    <div class="label">RETINA (the camera; the box is where IT is looking)</div>
+    <div id="retina-wrap">
+        <canvas id="retina" width="96" height="96"></canvas>
+        <div id="gaze-box"></div>
+    </div>
+    <div class="label" style="margin-top:8px">IMAGINATION (what it expects)</div>
+    <canvas id="imagine" width="96" height="96"></canvas>
+    <div class="label" style="margin-top:8px">MIND'S EYE
+        <span class="value" id="mind-state">closed</span></div>
+    <canvas id="mind" width="96" height="96" class="closed"></canvas>
+    <div class="label" style="margin-top:8px">DREAMS</div>
+    <div id="dreams"></div>
+</div>
+
+<div class="hud ml">
+    <div class="label">WORDSTREAM (the room's text — including its own keys)</div>
+    <div id="transcript"></div>
+    <div class="label" style="margin-top:4px">IT TYPES</div>
+    <div id="typed"></div>
+    <div id="chat-row">
+        <input id="chat-input" maxlength="200" placeholder="say something to it…"
+               autocomplete="off" spellcheck="false">
+        <button id="chat-send">→</button>
+    </div>
+    <div class="label" style="margin-top:8px">EASEL (what it painted ·
+        <span class="value" id="h-strokes">0</span> strokes)</div>
+    <canvas id="easel" width="32" height="32"></canvas>
+    <div class="label" style="margin-top:8px">DORMANT ORGANS</div>
+    <div id="h-organs" class="dim-note">none installed yet</div>
+</div>
+
+<div class="hud bl">
+    <div class="label">DRIVES (level | setpoint)</div>
+    <div id="h-drives"></div>
+    <div class="label" style="margin-top:6px"
+         title="global modulation — three functional channels; hover a bar for the real events that raised it">TIDE</div>
+    <div id="h-chem"></div>
+    <div class="label" style="margin-top:6px"
+         title="small eager learners on the edge blocks; hover a diamond for its measured utility">FRINGE (soft edge ·
+        <span class="value" id="h-fringe-merges">0</span> hardened)</div>
+    <div id="h-fringe" class="dim-note">quiet</div>
+</div>
+
+<div class="hud br">
+    <div class="label">AFFECTS (discovered, unnamed)</div>
+    <div id="h-affects">none yet — it hasn't felt anything</div>
+    <div class="label" style="margin-top:6px">SURPRISE (60s)</div>
+    <canvas id="spark" width="220" height="36"></canvas>
+    <div class="label">LATENT STD <span class="value" id="h-std">—</span> ·
+        LOSS <span class="value" id="h-loss">—</span></div>
+    <div class="label" style="margin-top:6px">VOICE</div>
+    <canvas id="spectro" width="220" height="48"></canvas>
+</div>
+
+<div id="console">
+    <button id="imprint" title="hold while showing your face and saying your name">◈ IMPRINT</button>
+    <button id="minds-eye" class="off" title="watch and hear the stream of its predicted reality (costs it energy)">◉ MIND'S EYE</button>
+    <button id="mute" class="on">VOICE ON</button>
+    <button id="plasma-btn" class="off" title="ambient plasma view (decorative); PULSE stays the honest one">◌ PLASMA</button>
+    <span id="status">connecting…</span>
+</div>
+<div id="footer">an artificial infant organism · runs locally · nothing leaves this machine</div>
+
+<script>window.WS_PORT = Number(document.body.dataset.wsPort);</script>
+<script src="{{ url_for('static', filename='organism.js') }}"></script>
+</body>
+</html>

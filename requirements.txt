@@ -1,0 +1,8 @@
+torch>=2.0.0
+transformers>=4.30.0
+numpy>=1.24.0
+flask>=3.0.0
+opencv-python>=4.8.0
+websockets>=12.0
+# accelerate is optional: only used on the CUDA-OOM spill path
+# (device_map="auto"), which falls back to pure CPU without it.
