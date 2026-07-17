@@ -33,44 +33,12 @@ class EmotionConfig:
     max_val: float = 1.0
 
 
-EMOTION_CONFIGS: Dict[str, EmotionConfig] = {
-    "calm":      EmotionConfig(onset_rate=0.15, decay_rate=0.02, baseline=0.3),
-    "curious":   EmotionConfig(onset_rate=0.4,  decay_rate=0.08, baseline=0.1),
-    "desperate": EmotionConfig(onset_rate=0.5,  decay_rate=0.03, baseline=0.0),
-    "joy":       EmotionConfig(onset_rate=0.35, decay_rate=0.06, baseline=0.05),
-    "anger":     EmotionConfig(onset_rate=0.6,  decay_rate=0.04, baseline=0.0),
-    "fear":      EmotionConfig(onset_rate=0.7,  decay_rate=0.05, baseline=0.0),
-    "surprise":  EmotionConfig(onset_rate=0.9,  decay_rate=0.15, baseline=0.0),
-    "trust":     EmotionConfig(onset_rate=0.1,  decay_rate=0.01, baseline=0.2),
-    "sadness":   EmotionConfig(onset_rate=0.2,  decay_rate=0.02, baseline=0.0),
-    "disgust":   EmotionConfig(onset_rate=0.5,  decay_rate=0.06, baseline=0.0),
-}
-
-
-# Hand-authored interaction matrix — the FALLBACK. When a profile carries
-# Mirror dynamics, this is replaced by a matrix FITTED at profile-creation
-# time from the model's implied emotional trajectories (correlation of one
-# emotion's level with another's next-beat change — see mirror.py). No
-# cosine-geometry derivation exists; these are fitted, not derived.
-EMOTION_INTERACTIONS: Dict[Tuple[str, str], float] = {
-    ("desperate", "calm"):    -0.5,
-    ("joy", "desperate"):     -0.3,
-    ("calm", "desperate"):    -0.4,
-    ("desperate", "joy"):     -0.2,
-    ("curious", "calm"):       0.1,
-    ("anger", "calm"):        -0.6,
-    ("anger", "fear"):         0.2,
-    ("fear", "desperate"):     0.3,
-    ("fear", "anger"):         0.15,
-    ("joy", "trust"):          0.2,
-    ("sadness", "joy"):       -0.4,
-    ("joy", "sadness"):       -0.3,
-    ("trust", "calm"):         0.15,
-    ("disgust", "trust"):     -0.3,
-    ("surprise", "curious"):   0.3,
-    ("calm", "anger"):        -0.3,
-    ("calm", "fear"):         -0.2,
-}
+# No hand-authored temperament. Onset/decay/baseline per emotion and the
+# cross-emotion interaction matrix are FITTED from the model's own implied
+# emotional trajectories at profile-creation time (the Mirror, mirror.py) —
+# extracted, never authored. If a profile carries no fitted dynamics for an
+# emotion, the honest fallback is a NEUTRAL EmotionConfig() (zero baseline,
+# no interactions): flat affect, not a hand-written personality.
 
 
 # Three speeds of emotional processing — fast reactions, medium mood,
@@ -141,14 +109,13 @@ class MultiSpeedEmotionalState:
         self.names = [e for e in emotion_names if not e.startswith("temporal_")]
         self.configs: Dict[str, EmotionConfig] = {}
         for n in self.names:
-            if configs and n in configs:
-                self.configs[n] = configs[n]
-            elif n in EMOTION_CONFIGS:
-                self.configs[n] = EMOTION_CONFIGS[n]
-            else:
-                self.configs[n] = EmotionConfig()
+            # fitted (extracted) config if present, else NEUTRAL — never an
+            # authored temperament
+            self.configs[n] = (configs[n] if configs and n in configs
+                               else EmotionConfig())
 
-        self.interactions = dict(interactions) if interactions is not None else dict(EMOTION_INTERACTIONS)
+        # fitted interactions if present, else NONE — no authored couplings
+        self.interactions = dict(interactions) if interactions is not None else {}
 
         self.fast = {n: self.configs[n].baseline for n in self.names}
         self.medium = {n: self.configs[n].baseline for n in self.names}

@@ -24,7 +24,7 @@ Mechanism, per expensive tick (~1.5s), and only when the model is idle
                      model finds likely is one it walks without stumbling.
        benefit     — 70% latent (rollout hidden states projected on the
                      profile's positive-emotion vectors against a neutral
-                     baseline) + 30% lexicon logit signal (LEXICON_WEIGHT),
+                     baseline) — read from the model's own geometry,
                      boosted by reward.
        risk        — same 70/30 blend against the threat composite
                      (fear/anger/disgust/desperate), amplified by stress.
@@ -55,26 +55,12 @@ from magnum_opus_v2.regions.subconscious import SubconsciousStack
 POSITIVE_EMOTIONS = ("joy", "trust", "calm", "curious")
 THREAT_EMOTIONS = ("fear", "anger", "disgust", "desperate", "sadness")
 
-# How a future FEELS is scored in LATENT SPACE first: the rollout's own
+# How a future FEELS is scored purely in LATENT SPACE: the rollout's own
 # mid-layer hidden states are projected onto the profile's emotion vectors
 # (directions extracted from the model's own geometry) relative to the
-# neutral baseline. No surface words required — a future is threatening if
-# it moves the model's state toward its own fear direction, whatever
+# neutral baseline. No surface words, no authored good/bad lexicon — a
+# future's valence is read from the model's own geometry, whatever
 # vocabulary it happens to use.
-#
-# A small lexicon channel remains as a SECONDARY signal (30%): the shift in
-# next-token probability mass over emotionally charged words. It reads the
-# model's beliefs, not the conversation's wording — its weakness is basket
-# narrowness, which is why it no longer leads.
-BENEFIT_WORDS = [
-    "good", "great", "love", "happy", "wonderful", "safe", "hope",
-    "joy", "beautiful", "peace", "friend", "warm", "success",
-]
-THREAT_WORDS = [
-    "danger", "fear", "bad", "death", "pain", "angry", "hate",
-    "terrible", "hurt", "afraid", "alone", "lost", "fail",
-]
-LEXICON_WEIGHT = 0.3   # latent projection carries the other 0.7
 
 
 class SpeculativeFutures(Region):
@@ -100,7 +86,6 @@ class SpeculativeFutures(Region):
         rollout_tokens: int = 14,            # imagined depth: futures are PHRASES
         rollout_budget_ms: float = 250.0,    # wall-clock cap on one rollout
         chained_continuation_tokens: int = 8,  # WORLD mode reads its trajectory further
-        lexicon_weight: float = 0.3,         # latent affect carries the other 0.7
         imagination_strength: float = 1.2,   # candidate offset added to bus.state
         winner_strength: float = 0.5,        # perturbation magnitude of chosen future
         plausibility_floor: float = 0.05,    # min utility to survive into penumbra
@@ -145,7 +130,6 @@ class SpeculativeFutures(Region):
         self.rollout_tokens = int(rollout_tokens)
         self.rollout_budget_ms = float(rollout_budget_ms)
         self.chained_continuation_tokens = int(chained_continuation_tokens)
-        self.lexicon_weight = float(lexicon_weight)
         self.imagination_strength = float(imagination_strength)
         self.winner_strength = float(winner_strength)
         self.plausibility_floor = float(plausibility_floor)
@@ -166,10 +150,6 @@ class SpeculativeFutures(Region):
             if not n.startswith("temporal_")
         }
         self._base_proj: Dict[str, float] = dict(baseline_projections or {})
-
-        # Emotional lexicon token ids for logit-shift scoring (secondary)
-        self._pos_ids = self._lexicon_ids(BENEFIT_WORDS)
-        self._neg_ids = self._lexicon_ids(THREAT_WORDS)
 
         # Shared with the flow-clock penumbra companion
         self.penumbra: List[dict] = []  # {"vec","weight","word","utility"}
@@ -200,20 +180,6 @@ class SpeculativeFutures(Region):
             return None
         v = torch.stack(parts).mean(dim=0)
         return (v / (v.norm() + 1e-8)).to(self.device)
-
-    def _lexicon_ids(self, words) -> Optional[torch.Tensor]:
-        ids = set()
-        for w in words:
-            for form in (w, " " + w, w.capitalize(), " " + w.capitalize()):
-                try:
-                    toks = self.tokenizer.encode(form, add_special_tokens=False)
-                except Exception:  # noqa: BLE001
-                    continue
-                if toks:
-                    ids.add(int(toks[0]))
-        if not ids:
-            return None
-        return torch.tensor(sorted(ids), device=self.device, dtype=torch.long)
 
     def penumbra_companion(self) -> "SpeculativePenumbra":
         return SpeculativePenumbra(self)
@@ -252,22 +218,15 @@ class SpeculativeFutures(Region):
             return None
         try:
             base_state = bus.state.detach().clone()
-            # Per-mode stages and per-mode baseline passes ("the present,
-            # unimagined"). Every future is scored by what it CHANGES
-            # relative to its own stage's baseline — otherwise the model's
-            # large baseline response drowns the candidate signal.
+            # Per-mode stages (speech / world / user). Each future's valence
+            # is read from the rollout's own mid-layer states projected onto
+            # the extracted emotion vectors vs the neutral baseline.
             seeds: Dict[str, torch.Tensor] = {}
-            bases: Dict[str, Optional[torch.Tensor]] = {}
             scored = []
             for source, vec, mode in candidates[: self.n_futures]:
                 if mode not in seeds:
                     seeds[mode] = self._seed_for_mode(mode)
-                    bases[mode] = self._silent_pass(base_state, seeds[mode])
-                logp_base = bases[mode]
-                if logp_base is None:
-                    continue
-                result = self._imagine(base_state, vec, logp_base,
-                                       seeds[mode], mode=mode)
+                result = self._imagine(base_state, vec, seeds[mode], mode=mode)
                 if result is None:
                     continue
                 scored.append({
@@ -493,25 +452,6 @@ class SpeculativeFutures(Region):
                     pass
         return self._context_seed()
 
-    def _silent_pass(self, steer: torch.Tensor,
-                     seed: Optional[torch.Tensor] = None) -> Optional[torch.Tensor]:
-        """One steered silent forward pass ON THE GIVEN STAGE. Returns
-        next-token log-probs or None. The steering injects at the mid
-        layer; its causal effect is read downstream in the logits."""
-        if seed is None:
-            seed = self._context_seed()
-        self.hook.set_steering(steer.to(self.device))
-        try:
-            with torch.no_grad():
-                out = self.model(seed)
-        except Exception:  # noqa: BLE001 — never crash the substrate
-            return None
-        finally:
-            self.hook.set_steering(None)
-
-        logits = out.logits[0, -1].detach().float()
-        return F.log_softmax(logits, dim=-1)
-
     def _affect_of(self, h: torch.Tensor) -> Tuple[float, float]:
         """Latent (benefit, risk) of one mid-layer state, measured against
         the model's own emotion directions and neutral baseline."""
@@ -529,7 +469,6 @@ class SpeculativeFutures(Region):
         self,
         base_state: torch.Tensor,
         direction: torch.Tensor,
-        logp_base: torch.Tensor,
         seed: Optional[torch.Tensor] = None,
         mode: str = "world",
     ) -> Optional[dict]:
@@ -554,7 +493,6 @@ class SpeculativeFutures(Region):
 
         self.hook.set_steering(steer)
         rollout_h = None
-        step_shifts: list = []
         over = False
         try:
             with torch.no_grad():
@@ -576,9 +514,6 @@ class SpeculativeFutures(Region):
                         over = True            # deep enough is bounded enough
                         break
                     step_logp = F.log_softmax(cur_logits, dim=-1)
-                    # multi-point lexicon: the belief shift over charged
-                    # words at THIS step, not just the first token.
-                    step_shifts.append(step_logp)
                     # Sampled, not greedy — greedy collapses every candidate
                     # onto the same dominant continuation; imagination must
                     # be able to diverge.
@@ -635,26 +570,12 @@ class SpeculativeFutures(Region):
             lat_benefit, lat_risk = self._affect_of(rollout_h)
             lat_risk_max = lat_risk
 
-        # ---- lexicon channel (secondary), MULTI-POINT: belief shift over
-        # charged words averaged across the rollout's steps.
-        lex_benefit = lex_risk = 0.0
-        if step_shifts:
-            mean_logp = torch.stack(step_shifts).mean(dim=0)
-            shift = mean_logp - logp_base
-            if self._pos_ids is not None:
-                lex_benefit = float(np.tanh(3.0 * float(shift[self._pos_ids].mean())))
-            if self._neg_ids is not None:
-                lex_risk = float(np.tanh(3.0 * float(shift[self._neg_ids].mean())))
-
-        lw = self.lexicon_weight
-        benefit = (1.0 - lw) * lat_benefit + lw * lex_benefit
-        risk = (1.0 - lw) * lat_risk + lw * max(0.0, lex_risk)
-        risk_max = (1.0 - lw) * lat_risk_max + lw * max(0.0, lex_risk)
+        # valence is read purely from the model's own geometry (no lexicon)
         return {
             "probability": probability,
-            "benefit": benefit,
-            "risk": max(0.0, risk),
-            "risk_max": max(0.0, risk_max),
+            "benefit": lat_benefit,
+            "risk": max(0.0, lat_risk),
+            "risk_max": max(0.0, lat_risk_max),
             "phrase": phrase,
             "tokens_used": len(ids),
             "over_budget": over,

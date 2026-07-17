@@ -170,16 +170,21 @@ def create_profile(
 
     baseline = _discover_baseline(model, tokenizer, vectors, target_layer, device, verbose)
 
-    # The Mirror: fit emotion dynamics from the model's implied trajectories
+    # The Mirror: fit emotion dynamics (onset/decay/baseline + interactions)
+    # from the model's own implied emotional trajectories. This is where the
+    # engine's temperament comes FROM THE LLM. There is no authored fallback:
+    # if fitting fails, affect is flat/neutral (EmotionConfig()), never a
+    # hand-written personality.
     from magnum_opus_v2.mirror import extract_dynamics
     try:
         dynamics = extract_dynamics(
             model, tokenizer, vectors, baseline.projections,
             target_layer, device, verbose=verbose,
         )
-    except Exception as e:  # noqa: BLE001 — dynamics are optional
+    except Exception as e:  # noqa: BLE001
         if verbose:
-            print(f"  Mirror extraction failed ({e}) — using default dynamics.")
+            print(f"  Mirror extraction failed ({e}) — affect will be FLAT/"
+                  "neutral (no fitted dynamics, and no authored fallback).")
         dynamics = None
 
     metadata = ProfileMetadata(

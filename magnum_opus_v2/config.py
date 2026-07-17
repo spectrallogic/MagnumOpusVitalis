@@ -58,7 +58,6 @@ class SpeculativeConfig:
     rollout_tokens: int = 14          # imagined depth (was 6): futures are phrases
     rollout_budget_ms: float = 250.0  # wall-clock cap on one candidate's rollout
     chained_continuation_tokens: int = 8  # WORLD mode reads its own trajectory further
-    lexicon_weight: float = 0.3       # latent affect carries the other 0.7
 
 
 @dataclass

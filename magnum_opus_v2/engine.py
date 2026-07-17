@@ -50,23 +50,10 @@ from magnum_opus_v2.journal import CognitionJournal
 DEFAULT_SYSTEM_PROMPT = None
 
 
-# Coarse keyword detection — FALLBACK sense only. The primary sense is
-# perceive_emotions(): the user's message is run through the model and its
-# hidden state is projected onto the extracted emotion vectors, so the
-# stimulus comes from the model's own semantic reading of the message, not
-# from a word list. Keywords remain as a cheap backstop if that pass fails.
-_EMOTION_KEYWORDS: Dict[str, List[str]] = {
-    "joy":      ["happy", "great", "awesome", "love", "wonderful", "excited"],
-    "sadness":  ["sad", "lonely", "unhappy", "down", "sorry", "miss"],
-    "fear":     ["afraid", "scared", "worried", "anxious", "nervous"],
-    "anger":    ["angry", "mad", "furious", "hate", "annoyed"],
-    "disgust":  ["disgusting", "gross", "yuck", "awful"],
-    "surprise": ["wow", "really?", "what?!", "no way"],
-    "trust":    ["trust", "believe", "rely", "honest"],
-    "curious":  ["curious", "wonder", "why", "how"],
-    "calm":     ["calm", "peaceful", "relax", "fine"],
-    "desperate":["please", "need", "help", "urgent"],
-}
+# Emotion perception is latent-only: perceive_emotions() runs the user's
+# message through the model and projects its hidden state onto the
+# extracted emotion vectors. No keyword list — a message's felt content is
+# read from the model's own semantic reading, never from authored words.
 
 
 # Steered generation occasionally derails past its own turn and starts
@@ -90,16 +77,6 @@ def _clean_reply(text: str) -> str:
     if m:
         text = text[: m.start()]
     return text.strip()
-
-
-def _detect_emotions(text: str) -> Dict[str, float]:
-    text_l = text.lower()
-    out: Dict[str, float] = {}
-    for emo, words in _EMOTION_KEYWORDS.items():
-        score = sum(1 for w in words if w in text_l)
-        if score > 0:
-            out[emo] = min(1.0, 0.4 + 0.2 * score)
-    return out
 
 
 @dataclass
@@ -298,7 +275,6 @@ class V2Engine:
                 rollout_tokens=cfg.spec.rollout_tokens,
                 rollout_budget_ms=cfg.spec.rollout_budget_ms,
                 chained_continuation_tokens=cfg.spec.chained_continuation_tokens,
-                lexicon_weight=cfg.spec.lexicon_weight,
             )
             penumbra = speculative.penumbra_companion()
 
@@ -632,23 +608,16 @@ class V2Engine:
 
     def user_message(self, text: str) -> None:
         """User just sent something. Perceive its emotional content in
-        latent space (keyword fallback), learn the world-content of the
-        moment (memory + abstraction ladder), get reminded of similar past
-        moments, mark Temporal + Executive interaction, push the live
-        emotion blend into the subconscious so its filtering is informed."""
+        latent space (projection onto the extracted emotion vectors — no
+        word list), learn the world-content of the moment (memory +
+        abstraction ladder), get reminded of similar past moments, mark
+        Temporal + Executive interaction, push the live emotion blend into
+        the subconscious so its filtering is informed."""
         try:
             stim = self.perceive_emotions(text)
-            perception_ok = self._last_percept is not None
         except Exception:  # noqa: BLE001 — perception must never block a turn
             stim = {}
-            perception_ok = False
             self._last_percept = None
-        if not perception_ok:
-            # TRUE fallback: word-list sensing only when the latent sense
-            # organ itself failed. It never overrides the model's own read —
-            # "help me pick a color" must not register as desperation just
-            # because it contains the word "help".
-            stim = _detect_emotions(text)
         if stim:
             self.limbic.stimulate_many(stim, neuromod=self.neuromod)
 

@@ -21,7 +21,6 @@ def test_speculative_config_defaults_are_deepened():
     assert c.rollout_tokens == 14
     assert c.rollout_budget_ms > 0
     assert c.chained_continuation_tokens > 0
-    assert 0.0 <= c.lexicon_weight <= 1.0
     assert V2Config().spec.rollout_tokens == 14
 
 
