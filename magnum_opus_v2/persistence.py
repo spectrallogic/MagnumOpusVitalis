@@ -234,6 +234,7 @@ def save_engine(engine, path: Optional[Path] = None) -> Optional[Path]:
         "self_model": encode_self_model(engine.self_model),
         "situation": encode_situation(engine.situation),
         "executive": {"pressure": float(engine.executive.pressure)},
+        "alignment_gate": engine.alignment_gate.state_dict(),
         "rumination_steps": int(engine.rumination_steps),
     }
     with engine._history_lock:  # noqa: SLF001
@@ -318,6 +319,7 @@ def load_engine(engine, path: Optional[Path] = None) -> bool:
     apply_situation(engine.situation, data.get("situation", {}))
     engine.executive.pressure = float(
         data.get("executive", {}).get("pressure", 0.0))
+    engine.alignment_gate.load_state_dict(data.get("alignment_gate"))
     with engine._history_lock:  # noqa: SLF001
         engine.chat_history = [dict(m) for m in data.get("chat_history", [])]
     if engine.speculative is not None and data.get("forecast"):

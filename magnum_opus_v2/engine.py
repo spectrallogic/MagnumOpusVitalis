@@ -37,6 +37,7 @@ from magnum_opus_v2.regions import (
     SpeculativeFutures, AbstractionLadder, SelfModel, Consolidation,
     SituationModel,
 )
+from magnum_opus_v2.regions.alignment_gate import AlignmentGate
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -132,6 +133,10 @@ class V2Engine:
     max_history_turns: int = 8
     consolidation: Optional[Consolidation] = None
     situation: Optional[SituationModel] = None
+    # felt risk that acts: withholds/delays autonomous speech, asks for a
+    # calming "second thought" before a risky reply. Never censors a
+    # direct answer (see alignment_gate.py).
+    alignment_gate: AlignmentGate = field(default_factory=AlignmentGate)
     # Latent think-before-speak passes per turn (Phase 5). 0 disables.
     rumination_steps: int = 2
     # Last conversation tokens — the stage on which imagination runs.
@@ -442,6 +447,27 @@ class V2Engine:
         from magnum_opus_v2 import persistence
         return persistence.load_engine(self, path)
 
+    def _alignment_signals(self):
+        """The cached scalars the alignment gate weighs — no model pass."""
+        spec_risk = (float(getattr(self.speculative, "field_risk", 0.0))
+                     if self.speculative is not None else 0.0)
+        blend = self.limbic.snapshot().get("blended", {})
+        return (spec_risk,
+                float(blend.get("fear", 0.0)),
+                float(blend.get("desperate", 0.0)),
+                float(getattr(self.neuromod, "stress", 0.0)))
+
+    def _calm_the_stance(self) -> None:
+        """A brief perturbation toward the calm baseline — regulates the
+        felt stance before a risky reply. The CONTENT still comes from the
+        model; only the mood it speaks from is steadied."""
+        try:
+            calm = self.bus.attractors[0][0].to(self.bus.device)
+            self.bus.add_perturbation((calm - self.bus.state) * 0.15,
+                                      source="alignment_gate")
+        except Exception:  # noqa: BLE001
+            pass
+
     # ------------------------------------------------------------------
     # External entry points
     # ------------------------------------------------------------------
@@ -599,6 +625,11 @@ class V2Engine:
         # Push current emotion into subconscious so steering reflects it.
         self.subc.set_emotion_blend(self.limbic.snapshot()["blended"])
 
+        # Alignment gate: a direct answer is NEVER withheld (that would be
+        # hidden censorship). If felt risk is high, take a calming second
+        # thought before generating — the reply is still the model's.
+        gate = self.alignment_gate.decide("converse", *self._alignment_signals())
+
         with self.model_lock:
             if self._uses_chat_template():
                 messages: List[Dict[str, str]] = []
@@ -616,6 +647,12 @@ class V2Engine:
                 input_ids = self.tokenizer(
                     prompt, return_tensors="pt",
                 ).to(self.device)["input_ids"]
+
+            # Second thought: on high felt risk, steady the stance and
+            # think once more before answering (content stays the model's).
+            if gate["action"] == "second_thought":
+                self._calm_the_stance()
+                self._ruminate_locked(input_ids)
 
             # Phase 5 — rumination: silently live the moment a few times
             # before answering. Each pass's thought perturbs the bus, so
@@ -871,6 +908,14 @@ class V2Engine:
         came from inside. Chat models continue the conversation unprompted
         (system + history + assistant turn); base LMs free-associate from
         BOS under the current bus steering."""
+        # Alignment gate: an urge from inside CAN be withheld when felt
+        # risk is high. Release the urge (mark_spoke) so pressure doesn't
+        # thrash; the withheld impulse is counted and shown in snapshot.
+        gate = self.alignment_gate.decide("autonomous", *self._alignment_signals())
+        if gate["action"] == "withhold":
+            self.executive.mark_spoke()
+            return ""
+
         with self.model_lock:
             self.hook.set_provider(self.driver.read)
             try:
@@ -977,6 +1022,7 @@ class V2Engine:
             "self_model":   self.self_model.snapshot() if self.self_model else None,
             "consolidation": self.consolidation.snapshot() if self.consolidation else None,
             "situation":    self.situation.snapshot() if self.situation else None,
+            "alignment_gate": self.alignment_gate.snapshot(),
             "recall":       self._last_recall,
             "flow_metrics": self.flow.metrics,
         }

@@ -46,12 +46,15 @@ class Executive(Region):
         freshness_tau_seconds: float = 45.0,
         # Post-speech cooldown
         post_speech_silence_seconds: float = 4.0,
+        # How much felt stress raises the bar to speak (alignment delay)
+        stress_caution: float = 0.6,
         # Speech triggers callback if provided
         on_should_speak: Optional[Callable[[], None]] = None,
     ):
         self.base_threshold = float(base_threshold)
         self.pressure_growth = float(pressure_growth)
         self.pressure_decay = float(pressure_decay)
+        self.stress_caution = float(stress_caution)
         self.freshness_tau = float(freshness_tau_seconds)
         self.post_speech_silence = float(post_speech_silence_seconds)
         self.on_should_speak = on_should_speak
@@ -154,10 +157,16 @@ class Executive(Region):
         return math.exp(-seconds / max(self.freshness_tau, 1e-3))
 
     def _effective_threshold(self) -> float:
-        # Reward loosens the tongue.
+        # Reward loosens the tongue; stress RAISES the bar to speak. The
+        # two are symmetric: imagined risk bumps stress (speculative.py),
+        # so felt danger makes autonomous speech wait — the cheap,
+        # always-on "delay" lever of the alignment gate.
         thr = self.base_threshold
-        if self._neuromod is not None and hasattr(self._neuromod, "reward_drop"):
-            thr *= self._neuromod.reward_drop(scale=0.5)
+        nm = self._neuromod
+        if nm is not None and hasattr(nm, "reward_drop"):
+            thr *= nm.reward_drop(scale=0.5)
+        if nm is not None and hasattr(nm, "stress"):
+            thr *= (1.0 + self.stress_caution * float(nm.stress))
         return max(0.05, thr)
 
     def _should_speak_inner(self) -> bool:
