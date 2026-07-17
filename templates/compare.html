@@ -350,6 +350,9 @@
             <div class="row"><span class="label">resonant → felt</span><span class="val" id="intrusive-counts">—</span></div>
             <div class="row"><span class="label">strength · confidence</span>
                 <span class="val"><span id="intrusive-norm">—</span> · <span id="intrusive-confidence">—</span></span></div>
+            <div class="label" style="margin-top:6px;font-size:9px">stream — the subconscious is a channel, not one value</div>
+            <div id="subc-stream" style="max-height:120px;overflow-y:auto;font-size:11px;
+                 font-family:'SF Mono',Consolas,monospace"></div>
         </div>
 
         <div class="panel">
@@ -489,6 +492,78 @@ function tlHighlightTurn(turn) {
         el => el.classList.remove("hot"));
     document.querySelectorAll(`#timeline-list [data-turn="${turn}"]`).forEach(
         el => el.classList.add("hot"));
+}
+
+/* --- memory browser (kept off the 5Hz snapshot) ------------------- */
+async function loadMemory() {
+    try {
+        const r = await fetch("/api/memory");
+        if (!r.ok) return;
+        const traces = (await r.json()).traces || [];
+        const el = document.getElementById("memory-list");
+        document.getElementById("mem-count").textContent =
+            `${traces.length} traces`;
+        el.innerHTML = traces.slice().reverse().map(t => {
+            const tag = escapeHtml(String(t.tag || "?")).slice(0, 40);
+            const flag = t.false
+                ? ' <span style="color:#f7768e" title="false / confabulated memory">≈ false</span>' : "";
+            return `<div class="row" style="padding:1px 0">
+                <span class="label" style="text-transform:none">${tag}${flag}</span>
+                <span class="val">${(t.importance ?? 0).toFixed(2)}</span></div>`;
+        }).join("") || '<div class="row"><span class="label">no memories yet</span></div>';
+    } catch (e) {}
+}
+
+/* --- first-run tour + inline "?" affordances ---------------------- */
+const GLOSSARY = {
+    "Thought stream": "A live log of what the mind actually did — every row is a real computation (imagining a future, choosing a word, feeling, betting a forecast, the alignment gate acting). Grouped per reply.",
+    "Memory browser": "Recent latent memory traces. ≈ false marks a confabulated (invented) memory the subconscious deliberately mixes in — it can dream with it, but it can never become belief.",
+    "Latent Bus": "The shared substrate — one vector living in the model's own hidden space, nudged by every region. The sparkline is its motion.",
+    "Speculation — imagined futures": "Short sampled rollouts of what might happen next, scored by probability / benefit / risk. The chosen one nudges the mind; the rest linger in the penumbra (back of mind).",
+    "Forecast ledger": "Imagined futures given due dates and checked against reality. Brier / ECE measure how honest 'likely' has been — lower Brier is better-calibrated.",
+    "Bus provenance": "Who wrote to the substrate this tick — every whisper is signed by its source.",
+    "Subconscious — latest intrusive": "The stream of intrusive thoughts bubbling up from noise, memories (incl. false ones), and surprise — the source of imagination.",
+    "Modulators": "arousal · reward · calm · stress — global gain channels (renamed from hormone metaphors) that modulate how every region behaves.",
+    "Emotion (signed)": "Blended emotions read out of the model's own geometry; green = felt, red = suppressed.",
+};
+function installHelp() {
+    document.querySelectorAll(".panel h3").forEach(h => {
+        const title = h.childNodes[0].textContent.trim();
+        const key = Object.keys(GLOSSARY).find(k => title.startsWith(k));
+        if (!key) return;
+        const q = document.createElement("span");
+        q.textContent = " ?"; q.style.cssText =
+            "cursor:pointer;color:#7aa2f7;font-size:10px;opacity:.6";
+        q.title = GLOSSARY[key];
+        h.appendChild(q);
+    });
+}
+function maybeTour() {
+    if (localStorage.getItem("mov_seen_tour")) return;
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;" +
+        "align-items:center;justify-content:center;background:rgba(2,4,8,0.86)";
+    ov.innerHTML =
+        `<div style="max-width:520px;background:#12141c;border:1px solid #2a2f45;
+             border-radius:10px;padding:22px 26px;font-size:13px;line-height:1.65">
+          <h2 style="margin:0 0 10px;color:#7aa2f7">Watching a mind think</h2>
+          <p style="color:#a9b1d6">This is a living substrate overlaid on a frozen
+          language model. The left is a conversation (raw model vs the engine-steered
+          one). The right shows the mind's inner life:</p>
+          <ul style="color:#9aa5ce;padding-left:18px">
+            <li><b>Thought stream</b> — watch it imagine, choose, feel, predict, and act, in real time.</li>
+            <li><b>Emotions & subconscious</b> — read out of the model's own geometry; the source of its tone and its imagination.</li>
+            <li><b>Forecast ledger</b> — its imagined futures held to account against reality.</li>
+            <li>Hover a reply's <b>why ▾</b> to see what shaped it. Hover any panel's <b>?</b> for a plain explanation.</li>
+          </ul>
+          <button id="tour-ok" style="margin-top:8px;padding:8px 18px;border:0;
+             border-radius:6px;background:#7aa2f7;color:#0d1017;font-weight:600;
+             cursor:pointer">Got it</button>
+        </div>`;
+    document.body.appendChild(ov);
+    ov.querySelector("#tour-ok").addEventListener("click", () => {
+        localStorage.setItem("mov_seen_tour", "1"); ov.remove();
+    });
 }
 
 /* --- bus sparkline ------------------------------------------------ */
@@ -649,6 +724,20 @@ function updateDashboard(s) {
     document.getElementById("intrusive-norm").textContent = (sub.intrusive_norm ?? 0).toFixed(3);
     document.getElementById("intrusive-confidence").textContent = (sub.intrusive_confidence ?? 0).toFixed(2);
     document.getElementById("intrusive-counts").textContent = `${sub.l1_count ?? 0} → ${sub.l2_count ?? 0}`;
+    /* subconscious stream — every intrusion, not just the latest */
+    const scList = document.getElementById("subc-stream");
+    const stream = sub.stream || [];
+    if (stream.length) {
+        scList.innerHTML = stream.slice(-30).reverse().map(x => {
+            const w = x.word || (x.meta && x.meta.token_id != null ? "·" : x.source);
+            const surp = x.surprise ? ' <span style="color:#e0af68">!</span>' : "";
+            return `<div class="row" style="padding:1px 0">
+                <span class="pill">${escapeHtml(x.source||"?")}</span>
+                <span class="val">${(x.confidence ?? 0).toFixed(2)} · ${(x.norm ?? 0).toFixed(2)}${surp}</span></div>`;
+        }).join("");
+    } else if (!scList.innerHTML) {
+        scList.innerHTML = '<div class="row"><span class="label">quiet</span></div>';
+    }
 
     /* executive + salience */
     const ex = s.executive || {};
@@ -824,6 +913,10 @@ document.getElementById("user-input").addEventListener("keydown", e => {
 });
 document.getElementById("reset-btn").addEventListener("click", reset);
 applyHash();
+installHelp();
+maybeTour();
+loadMemory();
+setInterval(loadMemory, 8000);
 connectStream();
 </script>
 </body>

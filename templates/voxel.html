@@ -152,6 +152,11 @@
     <div id="h-futures"></div>
     <div class="label" style="margin-top:6px">BACK OF MIND</div>
     <div class="penumbra-words" id="h-penumbra">—</div>
+    <div class="label" style="margin-top:8px; font-size:9px; opacity:0.75">
+        <span style="color:#7dcfff">◆</span> future ·
+        <span style="color:#bb9af7">◆</span> penumbra ·
+        <span style="color:#ff9e64">◆</span> intrusive
+    </div>
 </div>
 
 <div class="hud" id="hud-bl">
@@ -1274,8 +1279,12 @@ function drawOverlay(t) {
         const a = Math.sin(Math.PI * k) *
             (th.kind === "future" ? 0.55 : th.kind === "intrusive" ? 0.5 : 0.3);
         ov.font = `${th.size}px Consolas, monospace`;
-        ov.fillStyle = th.kind === "penumbra"
-            ? `rgba(187,154,247,${a})` : rgba(C, a);
+        // each thought KIND is now visually distinct (legend, below)
+        ov.fillStyle =
+            th.kind === "penumbra"  ? `rgba(187,154,247,${a})` :   // back of mind
+            th.kind === "intrusive" ? `rgba(255,158,100,${a})` :   // intrusion
+            th.kind === "future"    ? `rgba(125,207,255,${a})` :   // imagined future
+                                      rgba(C, a);
         ov.textAlign = "center";
         ov.fillText(th.text, x, y);
     }
