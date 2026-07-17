@@ -53,6 +53,7 @@ class ForecastLedger:
         self.open: List[dict] = []
         self.resolved: List[dict] = []          # bounded below
         self._lock = threading.Lock()
+        self.journal = None                     # wired by the engine; guarded
 
         # per-mode calibration: 10 bins of (n, hits)
         self._bins: Dict[str, List[List[int]]] = {}
@@ -66,8 +67,9 @@ class ForecastLedger:
             for f in futures:
                 if f.get("vec") is None:
                     continue
+                fid = next(self._ids)
                 self.open.append({
-                    "id": next(self._ids),
+                    "id": fid,
                     "ts": now,
                     "tick": tick,
                     "mode": f.get("mode", "world"),
@@ -79,6 +81,15 @@ class ForecastLedger:
                     "deadline": now + self.horizon_s,
                     "status": "open",
                 })
+                if self.journal is not None:
+                    try:
+                        self.journal.emit(
+                            "forecast_opened", turn=tick, fid=fid,
+                            phrase=(f.get("name") or "")[:48],
+                            mode=f.get("mode", "world"),
+                            probability=round(float(f.get("probability", 0.0)), 3))
+                    except Exception:  # noqa: BLE001
+                        pass
             # bound the open set: oldest expire unresolved (honest count)
             while len(self.open) > self.max_open:
                 stale = self.open.pop(0)
@@ -115,6 +126,15 @@ class ForecastLedger:
                     fc["evidence_cos"] = round(cos, 4)
                     fc["status"] = "hit" if cos >= self.hit_cos else "miss"
                     self._score(fc)
+                if self.journal is not None:
+                    try:
+                        self.journal.emit(
+                            "forecast_resolved", turn=fc.get("tick", 0),
+                            fid=fc.get("id"), phrase=fc.get("phrase", ""),
+                            status=fc["status"],
+                            evidence_cos=fc.get("evidence_cos"))
+                    except Exception:  # noqa: BLE001
+                        pass
                 self._keep(fc)
                 n += 1
             self.open = still_open

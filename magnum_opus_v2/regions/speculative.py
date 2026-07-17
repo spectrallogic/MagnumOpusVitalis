@@ -179,6 +179,10 @@ class SpeculativeFutures(Region):
         from magnum_opus_v2.forecast import ForecastLedger
         self.ledger = ForecastLedger()
 
+        # optional cognition journal (wired by the engine); guarded so the
+        # region works standalone in tests.
+        self.journal = None
+
         # Diagnostics for dashboard
         self.last_futures: List[dict] = []
         self.rounds_total = 0
@@ -373,6 +377,23 @@ class SpeculativeFutures(Region):
                 }
                 for f in scored
             ]
+
+        # Journal the winner + penumbra survivors (throttled to the few
+        # that matter, not every raw candidate) so the timeline can show
+        # what was imagined this round.
+        if self.journal is not None:
+            try:
+                for f in ([winner] + rest[:3]):
+                    self.journal.emit(
+                        "future_considered", turn=bus.tick_count,
+                        word=f["name"], mode=f["mode"],
+                        probability=round(f["probability"], 3),
+                        benefit=round(f["benefit"], 3),
+                        risk=round(f["risk"], 3),
+                        utility=round(f["utility"], 3),
+                        chosen=(f is winner))
+            except Exception:  # noqa: BLE001
+                pass
 
         # The chosen future pulls the present toward it.
         v = winner["vec"].to(bus.device).float()

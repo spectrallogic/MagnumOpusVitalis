@@ -38,6 +38,8 @@ without Salience, full strength is admitted.
 """
 
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -248,6 +250,9 @@ class SubconsciousStack(Region):
 
         # Last-tick diagnostic for the dashboard / verification
         self.last_intrusive: Optional[Candidate] = None
+        # a bounded stream of recent intrusions — the subconscious is a
+        # channel, not a single latest value
+        self.intrusive_history: deque = deque(maxlen=64)
         self.last_l1_count: int = 0
         self.last_l2_count: int = 0
         self.last_was_surprise: bool = False
@@ -316,6 +321,7 @@ class SubconsciousStack(Region):
                 "intrusive_norm": float(intr.vec.norm()) if intr is not None else 0.0,
                 "intrusive_confidence": intr.confidence if intr is not None else 0.0,
                 "intrusive_meta": intr.meta if intr is not None else None,
+                "stream": list(self.intrusive_history)[-30:],
             }
 
     # ------------------------------------------------------------------
@@ -346,6 +352,15 @@ class SubconsciousStack(Region):
             self.last_intrusive = chosen
             if chosen is None:
                 return None
+            # record the intrusion into the stream (facts, not tensors)
+            self.intrusive_history.append({
+                "ts": round(time.time(), 2),
+                "source": chosen.source,
+                "confidence": round(float(chosen.confidence), 3),
+                "norm": round(float(chosen.vec.norm()), 3),
+                "surprise": bool(was_surprise),
+                "meta": dict(chosen.meta or {}),
+            })
 
             v = chosen.vec.to(bus.device).float()
             v = v / (v.norm() + 1e-8) * self.l3_perturbation_strength * self._attention_gain

@@ -122,11 +122,17 @@ def stream():
     speech, so the dashboard breathes at the substrate's pace instead of
     polling every 2 seconds."""
     def gen():
+        # start at the present — a fresh connection shows the mind's
+        # thinking from now on, never an invented past
+        last_jid = engine.journal.latest_id()
         while True:
             try:
                 payload = engine.snapshot()
                 payload["turn"] = len(engine_history)
                 payload["autonomous"] = engine.drain_autonomous_messages()
+                engine.maybe_log_emotion(payload)     # honest, change-triggered
+                payload["journal"] = engine.journal.since(last_jid, limit=120)
+                last_jid = engine.journal.latest_id()
                 yield f"data: {json.dumps(payload)}\n\n"
             except GeneratorExit:
                 return
@@ -146,6 +152,27 @@ def status():
         s = engine.snapshot()
         s["turn"] = len(engine_history)
         return jsonify(s)
+    except Exception as e:
+        return _json_error(e)
+
+
+@app.route("/api/journal")
+def journal():
+    """The cognition journal since a given id — for timeline reconnect
+    backfill. Starts empty for a caller with no id."""
+    try:
+        since = int(request.args.get("since", engine.journal.latest_id()))
+        return jsonify({"events": engine.journal.since(since, limit=500),
+                        "latest_id": engine.journal.latest_id()})
+    except Exception as e:
+        return _json_error(e)
+
+
+@app.route("/api/memory")
+def memory():
+    """Browsable recent memory traces (kept off the 5Hz snapshot)."""
+    try:
+        return jsonify({"traces": engine.memory.recent(200)})
     except Exception as e:
         return _json_error(e)
 

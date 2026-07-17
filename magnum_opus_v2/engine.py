@@ -18,6 +18,7 @@ external entry points (user message, generate, snapshot).
 
 import re
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional
@@ -38,6 +39,7 @@ from magnum_opus_v2.regions import (
     SituationModel,
 )
 from magnum_opus_v2.regions.alignment_gate import AlignmentGate
+from magnum_opus_v2.journal import CognitionJournal
 
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -137,6 +139,13 @@ class V2Engine:
     # calming "second thought" before a risky reply. Never censors a
     # direct answer (see alignment_gate.py).
     alignment_gate: AlignmentGate = field(default_factory=AlignmentGate)
+    # honest event feed — watch it think as a stream (see journal.py)
+    journal: CognitionJournal = field(default_factory=CognitionJournal)
+    # frozen causes of the last reply, for reply<-cause linking in the UI
+    _last_causes: Optional[dict] = None
+    # throttle for emotion_snapshot journal entries
+    _last_emo_log: float = 0.0
+    _last_dominant: Optional[str] = None
     # Latent think-before-speak passes per turn (Phase 5). 0 disables.
     rumination_steps: int = 2
     # Last conversation tokens — the stage on which imagination runs.
@@ -365,6 +374,11 @@ class V2Engine:
             consolidation=consolidation, situation=situation,
         )
 
+        # The cognition journal listens at the real emit sites.
+        if speculative is not None:
+            speculative.journal = inst.journal
+            speculative.ledger.journal = inst.journal
+
         # Imagination runs on the live conversation — give speculation a
         # window onto the engine's context tail.
         if speculative is not None:
@@ -446,6 +460,69 @@ class V2Engine:
         """Load a saved nap into this (built, not-yet-started) engine."""
         from magnum_opus_v2 import persistence
         return persistence.load_engine(self, path)
+
+    def _turn(self) -> int:
+        with self._history_lock:
+            return len(self.chat_history) // 2
+
+    def maybe_log_emotion(self, snap: Optional[dict] = None) -> None:
+        """Emit an emotion_snapshot to the journal only on a MEANINGFUL
+        change (dominant emotion flipped, or ≥1s elapsed) — honest, not
+        spam. Called once per SSE tick by the server."""
+        try:
+            blend = (snap or {}).get("limbic", {}).get("blended") \
+                or self.limbic.snapshot().get("blended", {})
+            if not blend:
+                return
+            dominant = max(blend, key=lambda k: blend[k])
+            now = time.monotonic()
+            changed = dominant != self._last_dominant
+            if not changed and (now - self._last_emo_log) < 1.0:
+                return
+            self._last_emo_log = now
+            self._last_dominant = dominant
+            self.journal.emit("emotion_snapshot", turn=self._turn(),
+                              dominant=dominant,
+                              value=round(float(blend[dominant]), 3))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _capture_causes(self, prompt: str, reply: str, gate: dict) -> None:
+        """Freeze the causal bundle of a reply and emit word_chosen +
+        reply_emitted to the journal so the UI can link output to cause."""
+        try:
+            turn = self._turn()
+            chosen = None
+            if self.speculative is not None:
+                for f in self.speculative.last_futures:
+                    if f.get("chosen"):
+                        chosen = {k: f.get(k) for k in
+                                  ("word", "mode", "probability", "benefit",
+                                   "risk", "utility")}
+                        break
+            blend = self.limbic.snapshot().get("blended", {})
+            dominant = max(blend, key=lambda k: blend[k]) if blend else None
+            intr = self.subc.snapshot().get("intrusive_word")
+            self._last_causes = {
+                "turn": turn,
+                "prompt": prompt[:80],
+                "reply": reply[:200],
+                "chosen_future": chosen,
+                "dominant_emotion": dominant,
+                "emotion": {k: round(float(v), 3) for k, v in blend.items()},
+                "neuromod": self.neuromod.snapshot(),
+                "intrusive": intr,
+                "gate": {"action": gate.get("action"),
+                         "felt_risk": round(gate.get("felt_risk", 0.0), 3)},
+            }
+            if chosen and chosen.get("word"):
+                self.journal.emit("word_chosen", turn=turn,
+                                  word=chosen["word"], mode=chosen.get("mode"))
+            self.journal.emit("reply_emitted", turn=turn,
+                              reply=reply[:80], dominant=dominant,
+                              gate=gate.get("action"))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _alignment_signals(self):
         """The cached scalars the alignment gate weighs — no model pass."""
@@ -629,6 +706,10 @@ class V2Engine:
         # hidden censorship). If felt risk is high, take a calming second
         # thought before generating — the reply is still the model's.
         gate = self.alignment_gate.decide("converse", *self._alignment_signals())
+        if gate["action"] != "pass":
+            self.journal.emit("gate_fired", turn=self._turn(), site="converse",
+                              action=gate["action"],
+                              felt_risk=round(gate["felt_risk"], 3))
 
         with self.model_lock:
             if self._uses_chat_template():
@@ -695,6 +776,12 @@ class V2Engine:
             self.chat_history.append({"role": "user", "content": prompt})
             self.chat_history.append({"role": "assistant", "content": reply})
             self._trim_history()
+
+        # Reply <- cause: freeze WHAT SHAPED this reply at emission time
+        # (the winning future, the emotion the voice was tinted with, the
+        # gate's stance, any surfaced intrusion). Frozen so a later view
+        # never back-dates live state onto a past turn.
+        self._capture_causes(prompt, reply, gate)
 
         # Learn what was said (world-content), not just how it felt.
         try:
@@ -912,6 +999,10 @@ class V2Engine:
         # risk is high. Release the urge (mark_spoke) so pressure doesn't
         # thrash; the withheld impulse is counted and shown in snapshot.
         gate = self.alignment_gate.decide("autonomous", *self._alignment_signals())
+        if gate["action"] != "pass":
+            self.journal.emit("gate_fired", turn=self._turn(), site="autonomous",
+                              action=gate["action"],
+                              felt_risk=round(gate["felt_risk"], 3))
         if gate["action"] == "withhold":
             self.executive.mark_spoke()
             return ""

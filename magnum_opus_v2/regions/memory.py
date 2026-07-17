@@ -92,6 +92,21 @@ class Memory(Region):
         it, and an unlocked reader can misindex mid-eviction."""
         return MemorySampler(self.pool, device=self.device, lock=self._lock)
 
+    def recent(self, limit: int = 40) -> list:
+        """The pool tail as browsable facts (no tensors) — tag, importance,
+        and whether it is a false/confabulated memory (confidence < 1.0)."""
+        with self._lock:
+            out = []
+            for c in list(self.pool)[-limit:]:
+                meta = c.meta or {}
+                out.append({
+                    "tag": meta.get("tag", meta.get("source", "?")),
+                    "importance": round(float(meta.get("importance", 0.0)), 3),
+                    "false": bool(c.confidence < 1.0),
+                    "confidence": round(float(c.confidence), 3),
+                })
+            return out
+
     def snapshot(self) -> dict:
         with self._lock:
             n = len(self.pool)
