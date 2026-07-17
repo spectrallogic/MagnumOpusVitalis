@@ -15,7 +15,7 @@ import json
 import time
 import traceback
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, redirect
 
 from magnum_opus_v2 import (
     V2Engine,
@@ -53,7 +53,8 @@ def face():
 
 @app.route("/face2d")
 def face2d():
-    return render_template("face.html")
+    # the 2D plate face was a strict subset of the voxel face; retired.
+    return redirect("/face")
 
 
 @app.route("/api/talk", methods=["POST"])

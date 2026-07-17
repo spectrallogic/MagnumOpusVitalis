@@ -1,0 +1,60 @@
+<!-- Shared cockpit navigation. Static chrome + two liveness dots bound to
+     real HTTP probes (green = a real 200, grey = unreachable). No merged
+     live state: the two minds stay separate processes on separate ports. -->
+<style>
+  #mov-nav {
+    position: fixed; top: 0; left: 0; right: 0; height: 34px; z-index: 9999;
+    display: flex; align-items: center; gap: 2px; padding: 0 12px;
+    background: rgba(10, 12, 20, 0.82); backdrop-filter: blur(6px);
+    border-bottom: 1px solid rgba(122, 162, 247, 0.18);
+    font: 11px/1 -apple-system, "Segoe UI", system-ui, sans-serif;
+    letter-spacing: 0.04em; user-select: none;
+  }
+  #mov-nav .brand { color: #7aa2f7; font-weight: 600; margin-right: 14px;
+                    text-shadow: 0 0 8px rgba(122,162,247,0.4); }
+  #mov-nav a { color: #9aa5ce; text-decoration: none; padding: 6px 10px;
+               border-radius: 6px; transition: background .15s, color .15s; }
+  #mov-nav a:hover { color: #c0caf5; background: rgba(122,162,247,0.12); }
+  #mov-nav .spacer { flex: 1; }
+  #mov-nav .dot { display: inline-flex; align-items: center; gap: 5px;
+                  color: #6b7394; padding: 0 8px; }
+  #mov-nav .dot i { width: 8px; height: 8px; border-radius: 50%;
+                    background: #3b4261; transition: background .3s; }
+  #mov-nav .dot.up i   { background: #9ece6a; box-shadow: 0 0 6px #9ece6a; }
+  #mov-nav .dot.down i { background: #3b4261; }
+  body { padding-top: 34px; }
+</style>
+<nav id="mov-nav">
+  <span class="brand">◈ VITALIS</span>
+  <a href="/">Cockpit</a>
+  <a href="/face">Face</a>
+  <a href="/#timeline">Timeline</a>
+  <a href="/#memory">Memory</a>
+  <a href="http://127.0.0.1:5100/" target="_blank" rel="noopener">Primordium ↗</a>
+  <span class="spacer"></span>
+  <span class="dot" id="mov-dot-engine"><i></i>engine</span>
+  <span class="dot" id="mov-dot-prim"><i></i>primordium</span>
+</nav>
+<script>
+(function () {
+  async function probe(url, el) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    try {
+      const r = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+      el.classList.toggle("up", r.ok);
+      el.classList.toggle("down", !r.ok);
+    } catch (e) {
+      el.classList.remove("up"); el.classList.add("down");
+    } finally { clearTimeout(t); }
+  }
+  const eng = document.getElementById("mov-dot-engine");
+  const prim = document.getElementById("mov-dot-prim");
+  function tick() {
+    probe("/api/status", eng);
+    probe("http://127.0.0.1:5100/health", prim);
+  }
+  tick();
+  setInterval(tick, 4000);
+})();
+</script>
