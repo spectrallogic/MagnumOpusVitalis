@@ -182,8 +182,8 @@ class BusSteeringDriver:
     directions, the bus state IS already a meaningful steering vector.
 
     (An EMA-smoothing option used to live here; no live path ever set it
-    above zero, so it was dead mechanism and the Era-4 audit removed it.
-    The bus's own OU dynamics are the smoothing.)
+    above zero, so it was dead mechanism and was removed. The bus's own
+    OU dynamics are the smoothing.)
     """
 
     def __init__(self, bus: LatentBus, steering_strength: float = 1.0):

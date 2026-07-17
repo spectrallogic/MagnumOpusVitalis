@@ -208,7 +208,7 @@ class AbstractionLadder(Region):
         """Runs OUTSIDE the region lock, on copies: the vocab-scale
         matmuls here once ran under the same lock the perception-clock
         step() needs, so a dashboard poll on a big-vocab model could
-        stall interoception for hundreds of ms (Era-4 audit finding).
+        stall interoception for hundreds of ms.
         Labels are diagnostics; a benign string race is acceptable."""
         if self.W is None or self.tokenizer is None:
             return

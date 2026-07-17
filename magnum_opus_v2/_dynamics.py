@@ -51,8 +51,7 @@ EMOTION_CONFIGS: Dict[str, EmotionConfig] = {
 # Mirror dynamics, this is replaced by a matrix FITTED at profile-creation
 # time from the model's implied emotional trajectories (correlation of one
 # emotion's level with another's next-beat change — see mirror.py). No
-# cosine-geometry derivation exists; a comment here claimed one for a long
-# time, and the Era-4 audit corrected it.
+# cosine-geometry derivation exists; these are fitted, not derived.
 EMOTION_INTERACTIONS: Dict[Tuple[str, str], float] = {
     ("desperate", "calm"):    -0.5,
     ("joy", "desperate"):     -0.3,

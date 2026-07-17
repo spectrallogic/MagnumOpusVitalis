@@ -105,9 +105,6 @@ class TokenEmbeddingSampler(CandidateSampler):
         candidate_pool: int = 64,
         forbidden_token_ids: Optional[List[int]] = None,
     ):
-        # (a `min_alpha_chars` readability filter was advertised here for
-        # a long time but never implemented — deleted by the Era-4 audit
-        # rather than left as a knob that silently does nothing)
         self.W = embedding_matrix.detach().to(device).float()
         self.device = device
         self.candidate_pool = int(candidate_pool)

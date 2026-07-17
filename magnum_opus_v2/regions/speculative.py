@@ -168,7 +168,7 @@ class SpeculativeFutures(Region):
         self.penumbra: List[dict] = []  # {"vec","weight","word","utility"}
         self._penumbra_lock = threading.Lock()
 
-        # Era 6: imagined futures become accountable predictions
+        # imagined futures become accountable predictions
         from magnum_opus_v2.forecast import ForecastLedger
         self.ledger = ForecastLedger()
 

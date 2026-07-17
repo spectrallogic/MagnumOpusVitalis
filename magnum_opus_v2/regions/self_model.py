@@ -138,7 +138,7 @@ class SelfModel(Region):
                 # the most recent OBSERVED capture — what-just-was must be
                 # something that actually was: a freshly minted
                 # confabulation landing at pool[-1] used to leak straight
-                # into identity/felt-time (ADR-002 guard, Era 6)
+                # into identity/felt-time (epistemic guard)
                 for c in reversed(pool[-8:]):
                     if ((c.meta or {}).get("epistemic", "observed")
                             == "observed" and c.confidence >= 1.0):

@@ -117,8 +117,7 @@ class Temporal(Region):
         seconds_since = time.monotonic() - self._wall_at_interaction
         freshness = math.exp(-seconds_since / max(self.freshness_tau, 1e-3))
         # the fifth signal is REAL only when the engine wired a memory
-        # provider — for years it was hardcoded 0.0, a dead channel the
-        # docs still advertised (Era-4 audit finding)
+        # provider; without one this channel stays a measured 0.0
         mem_imp = 0.0
         if self.memory_provider is not None:
             try:

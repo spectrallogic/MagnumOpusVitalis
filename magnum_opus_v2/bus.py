@@ -2,9 +2,9 @@
 LatentBus — the shared substrate.
 
 A single continuously-evolving latent state vector with attractor dynamics.
-Every region reads from it and writes a perturbation back. This is the
-"playground" the user described: regions don't get told to do things in
-order, they all share this one substrate.
+Every region reads from it and writes a perturbation back. It is a shared
+playground: regions are never sequenced or told what to do in order — they
+all read this one substrate and add a perturbation to it.
 
 Update rule (per flow tick, dt ~50ms):
 
@@ -60,7 +60,7 @@ class LatentBus:
         # generation runs in the Flask handler thread. Both touch the bus.
         self._lock = threading.Lock()
 
-        # Provenance ledger (ADR-001/002, Era 6): every substrate write
+        # Provenance ledger: every substrate write
         # is recorded — {source, kind, norm, clock, ts}. The bus whispers,
         # and now every whisper is signed.
         self._prov: deque = deque(maxlen=256)
@@ -185,7 +185,7 @@ class LatentBus:
     def reset(self) -> None:
         """Zero state and velocity UNDER THE LOCK. Zeroing the tensors in
         place from another thread races the flow tick's reassignment and
-        can silently lose the reset (Era-4 audit finding)."""
+        can silently lose the reset."""
         with self._lock:
             self.state = torch.zeros_like(self.state)
             self.velocity = torch.zeros_like(self.velocity)

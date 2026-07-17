@@ -60,10 +60,10 @@ class Consolidation(Region):
     def step(self, bus: LatentBus, neuromod: object, dt: float) -> Optional[torch.Tensor]:
         # --- REPLAY: rehearse what still matters
         with self.memory._lock:  # noqa: SLF001 — shared pool by design
-            # EPISTEMIC GUARD (ADR-002): only OBSERVED traces may teach
+            # EPISTEMIC GUARD: only OBSERVED traces may teach
             # the ladder or distill into bus attractors. Confabulations
             # kept flowing here unmarked for a long time — a false
-            # memory could become a permanent disposition (Era-6 audit).
+            # memory could become a permanent disposition.
             scored = [
                 (float((c.meta or {}).get("importance", 0.0)), c.vec)
                 for c in self.memory.pool

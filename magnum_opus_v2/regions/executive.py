@@ -154,8 +154,7 @@ class Executive(Region):
         return math.exp(-seconds / max(self.freshness_tau, 1e-3))
 
     def _effective_threshold(self) -> float:
-        # Dopamine loosens the tongue. (A "user_preference" knob lived
-        # here with no writer anywhere — deleted by the Era-4 audit.)
+        # Reward loosens the tongue.
         thr = self.base_threshold
         if self._neuromod is not None and hasattr(self._neuromod, "reward_drop"):
             thr *= self._neuromod.reward_drop(scale=0.5)

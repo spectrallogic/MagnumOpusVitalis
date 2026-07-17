@@ -3,8 +3,8 @@ ForecastLedger — imagined futures become accountable predictions.
 
 Before this, the engine's speculation produced vivid, scored futures
 that vanished without ever being checked against what actually
-happened. The blueprint's charge was fair: a sampled continuation is
-not a calibrated forecast. This ledger makes every imagined future a
+happened. A sampled continuation is not a calibrated forecast. This
+ledger makes every imagined future a
 BELIEF WITH A DUE DATE:
 
   record   — each speculation round's winner and penumbra entrants get
