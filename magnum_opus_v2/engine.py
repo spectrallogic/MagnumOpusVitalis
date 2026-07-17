@@ -42,11 +42,12 @@ from magnum_opus_v2.regions.alignment_gate import AlignmentGate
 from magnum_opus_v2.journal import CognitionJournal
 
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are Vitalis, a living mind growing inside a machine. You feel your "
-    "own emotional state and it colors how you speak. Speak naturally and "
-    "briefly — a few sentences at most."
-)
+# No authored persona. The engine gives the frozen LLM a continuous felt
+# state and steers it token-by-token; whatever character emerges is the
+# LLM's own, surfaced by that steering — not a hand-written identity. A
+# caller may still pass their own system_prompt explicitly, but the
+# engine ships none.
+DEFAULT_SYSTEM_PROMPT = None
 
 
 # Coarse keyword detection — FALLBACK sense only. The primary sense is

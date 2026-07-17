@@ -8,30 +8,37 @@ crashes, the room simply goes quiet (the parent surfaces the absence).
     {"t":"observe","babble":"...","state":{...}}  ->  {"t":"say","text":"..."}
     {"t":"ping"}                                  ->  {"t":"pong"}
 
-`--stub` replaces the LLM with a tiny deterministic motherese mimic so
-tests can exercise the whole protocol without a 3.6GB model. Same
-protocol, clearly labeled in every reply's meta.
+`--stub` replaces the LLM with a tiny deterministic mimic so tests can
+exercise the whole protocol without a 3.6GB model. Same protocol,
+clearly labeled in every reply's meta.
+
+No authored persona: the caregiver LLM is given only a NEUTRAL, factual
+description of what the infant did and asked for a short response —
+whatever character it has is the model's own, not a hand-written
+"gentle caregiver" script. The caregiver ships OFF by default and is
+gated; this is optional environment, not behavior inside the mind.
 """
 
 import argparse
 import json
 import sys
 
-SYSTEM = (
-    "You are a gentle caregiver sitting with a pre-verbal infant mind. "
-    "It types babble; you answer with ONE short, warm sentence of at "
-    "most 12 simple words. Mirror its sounds sometimes. Name simple "
-    "things. Never explain, never list, never ask more than one thing."
-)
+
+def _neutral_prompt(babble: str, state: dict) -> str:
+    """A factual, personality-free description of the moment."""
+    if not babble:
+        return "The infant is quiet. Reply with one short sentence."
+    awake = "awake" if state.get("awake", True) else "asleep"
+    return (f"The infant typed: {babble!r}. It is {awake}, "
+            f"developmental stage {state.get('stage', 0)}. "
+            "Reply with one short sentence.")
 
 
 def _stub_reply(babble: str, n: int) -> str:
-    """Deterministic motherese: mirror a fragment, keep it warm."""
+    """Neutral deterministic stand-in — echoes a fragment so tests have
+    a stable, content-free reply. No authored personality."""
     frag = "".join(ch for ch in babble if ch.isalnum())[:6].lower()
-    lines = ["hello little one", "i hear you", "yes, that's you",
-             "oh? tell me more", "you found a sound", "i'm here"]
-    base = lines[n % len(lines)]
-    return f"{frag}? {base}" if frag else base
+    return f"reply {n}: {frag}" if frag else f"reply {n}"
 
 
 def main() -> None:
@@ -73,14 +80,10 @@ def main() -> None:
             else:
                 import torch
                 state = msg.get("state", {})
-                user = (f"(the infant typed: {babble!r}; it is "
-                        f"{'asleep' if not state.get('awake', True) else 'awake'}"
-                        f", stage {state.get('stage', 0)})"
-                        if babble else
-                        "(the infant is quiet; say one small warm thing)")
+                # neutral, factual prompt only — no authored persona
+                user = _neutral_prompt(babble, state)
                 chat = tok.apply_chat_template(
-                    [{"role": "system", "content": SYSTEM},
-                     {"role": "user", "content": user}],
+                    [{"role": "user", "content": user}],
                     tokenize=False, add_generation_prompt=True)
                 ids = tok(chat, return_tensors="pt").to(model.device)
                 with torch.no_grad():
