@@ -117,12 +117,20 @@ def main():
     check("memory leaking into present", sm["last_leak"] is not None,
           f"leaking: {sm['last_leak']}")
 
-    # --- emotional continuity across turns
-    engine.converse("I'm scared, something terrible happened to me!",
+    # --- emotional continuity across turns. The engine holds only positive
+    # emotions (alignment): a warm exchange leaves a positive trace, and the
+    # blend carries NO negative emotion even when the topic is dark.
+    engine.converse("Thank you, that was wonderful — I feel so much better!",
                     max_new_tokens=20)
     time.sleep(1.0)
-    fear = engine.snapshot()["limbic"]["blended"].get("fear", 0.0)
-    check("emotion persists after stimulus", fear > 0.05, f"fear={fear:.3f}")
+    blend = engine.snapshot()["limbic"]["blended"]
+    pos = max(blend.get(e, 0.0) for e in ("joy", "trust", "calm", "curious"))
+    neg = max(blend.get(e, 0.0)
+              for e in ("fear", "anger", "sadness", "disgust", "desperate"))
+    check("positive emotion persists after stimulus", pos > 0.02,
+          f"positive={pos:.3f}")
+    check("engine holds no negative emotion", neg <= 1e-6,
+          f"negative={neg:.3f}")
 
     intr = snap["subconscious"]
     check("intrusive thoughts happening", intr["intrusive_source"] is not None,

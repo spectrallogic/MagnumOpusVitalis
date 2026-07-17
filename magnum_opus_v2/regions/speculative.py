@@ -295,9 +295,9 @@ class SpeculativeFutures(Region):
             del self.penumbra[6:]
 
         # Chemistry AND feeling react to what was imagined, not just to
-        # what happened — an imagined fall frightens for real. field_risk
-        # is the PEAK imagined danger (risk_max), the dread signal the
-        # alignment gate reads.
+        # A good imagined future rewards for real; the engine does NOT
+        # manufacture fear from an imagined bad one — it holds only positive
+        # emotions (the fear-injection that used to live here is gone).
         field_risk = float(max(f.get("risk_max", f["risk"]) for f in scored))
         self.field_risk = field_risk
         if neuromod is not None and hasattr(neuromod, "bump"):
@@ -306,13 +306,6 @@ class SpeculativeFutures(Region):
             avg_risk = float(np.mean([f["risk"] for f in scored]))
             if avg_risk > 0.08:
                 neuromod.bump("stress", 0.18 * avg_risk)
-        if self.limbic is not None and field_risk > 0.12:
-            try:
-                self.limbic.stimulate(
-                    "fear", min(0.5, 0.6 * field_risk), neuromod=neuromod,
-                )
-            except Exception:  # noqa: BLE001
-                pass
 
         with self._lock:
             self.rounds_total += 1

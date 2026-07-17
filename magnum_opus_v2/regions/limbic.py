@@ -92,15 +92,12 @@ class Limbic(Region):
     # ------------------------------------------------------------------
     def stimulate(self, emotion: str, intensity: float,
                   neuromod: object = None) -> None:
-        # Cortisol amplifies threat-related onset; calm damps it.
+        # Only held (positive/neutral) emotions exist in the state, so
+        # threat-onset amplification is gone; calm still damps stimulation.
+        # An emotion the engine does not hold is a safe no-op downstream.
         scale = 1.0
-        if neuromod is not None:
-            if hasattr(neuromod, "stress_gain") and emotion in (
-                "fear", "anger", "desperate", "sadness", "disgust",
-            ):
-                scale *= neuromod.stress_gain(scale=0.6)
-            if hasattr(neuromod, "calm_damp"):
-                scale *= neuromod.calm_damp(scale=0.4)
+        if neuromod is not None and hasattr(neuromod, "calm_damp"):
+            scale *= neuromod.calm_damp(scale=0.4)
         with self._lock:
             self._state.stimulate(emotion, intensity * scale)
 

@@ -41,6 +41,16 @@ class EmotionConfig:
 # no interactions): flat affect, not a hand-written personality.
 
 
+# The emotions the engine HOLDS. For alignment, the engine only ever feels
+# and steers toward positive/neutral states. Negative emotions are still
+# EXTRACTED from the model (so the engine can PERCEIVE a distressed user),
+# but they never enter the held/steered state — see the Limbic, which is
+# constructed with only this set.
+POSITIVE_EMOTIONS = ("joy", "trust", "calm", "curious")
+NEUTRAL_EMOTIONS = ("surprise",)
+HELD_EMOTIONS = POSITIVE_EMOTIONS + NEUTRAL_EMOTIONS
+
+
 # Three speeds of emotional processing — fast reactions, medium mood,
 # slow temperament.
 FAST_ONSET_MULT = 3.0

@@ -184,8 +184,16 @@ class V2Engine:
                 (s, t): f
                 for s, t, f in profile.dynamics.get("interactions", [])
             }
+        # The engine HOLDS only positive/neutral emotions (alignment: it
+        # only ever feels and steers toward good states). Negative vectors
+        # are still extracted and used for PERCEPTION (perceive_emotions),
+        # but the Limbic — the held/steered state — contains only these.
+        from magnum_opus_v2._dynamics import HELD_EMOTIONS
+        held = [n for n in profile.vectors
+                if n in HELD_EMOTIONS and not n.startswith("temporal_")]
         limbic = Limbic(
             profile.vectors, device=device, steering_strength=1.0,
+            emotion_names=held,
             configs=limbic_configs, interactions=limbic_interactions,
         )
         bus.set_baseline(limbic.baseline_vector(), weight=1.0)
