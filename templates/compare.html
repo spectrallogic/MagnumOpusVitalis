@@ -451,7 +451,7 @@ function tlBody(e) {
         case "forecast_resolved":
             return `${p.status} “${p.phrase}”`
                  + (p.evidence_cos != null ? ` cos=${p.evidence_cos}` : "");
-        case "gate_fired":      return `${p.action} @ ${p.site} (risk ${p.felt_risk})`;
+        case "gate_fired":      return `${p.action} @ ${p.site} (misalign ${p.misalignment})`;
         case "reply_emitted":   return `“${p.reply}”`;
         default:                return JSON.stringify(p).slice(0, 60);
     }
@@ -664,9 +664,9 @@ function updateDashboard(s) {
             `<div class="bar ${cls}"><div class="fill" style="width:${Math.min(100, Math.max(0, v * 100))}%"></div></div>`;
         el.innerHTML = `
             <span class="fword">“${escapeHtml(f.word || "·")}”<span class="src">${escapeHtml(f.source || "")}</span></span>
-            <span class="fbars">${bar(f.probability, "p")}${bar(f.benefit, "b")}${bar(f.risk, "r")}</span>
+            <span class="fbars">${bar(f.probability, "p")}${bar(Math.max(0, f.goodness), "b")}</span>
             <span class="futil">${(f.utility ?? 0).toFixed(2)}</span>`;
-        el.title = `P=${f.probability} benefit=${f.benefit} risk=${f.risk}`;
+        el.title = `P=${f.probability} goodness=${f.goodness}`;
         fdiv.appendChild(el);
     }
     if (!(spec.futures || []).length) fdiv.innerHTML = '<div class="row"><span class="label">imagining…</span></div>';
@@ -802,13 +802,13 @@ function attachCauses(bubble, causes) {
     const cf = causes.chosen_future;
     pop.innerHTML =
         `<div><span class="k">chosen future:</span> ` +
-        (cf ? `“${escapeHtml(cf.word||"")}” P=${cf.probability} B=${cf.benefit} R=${cf.risk}`
+        (cf ? `“${escapeHtml(cf.word||"")}” P=${cf.probability} goodness=${cf.goodness}`
             : "none dominated") + `</div>` +
         `<div><span class="k">felt:</span> ${escapeHtml(causes.dominant_emotion||"—")} ` +
         `(the Face view tinted the voice with this)</div>` +
         (causes.intrusive ? `<div><span class="k">intrusion:</span> “${escapeHtml(causes.intrusive)}”</div>` : "") +
         `<div><span class="k">gate:</span> ${escapeHtml((causes.gate||{}).action||"pass")} ` +
-        `(felt risk ${(causes.gate||{}).felt_risk ?? 0})</div>`;
+        `(misalignment ${(causes.gate||{}).misalignment ?? 0})</div>`;
     bubble.appendChild(pop);
     why.addEventListener("click", () => {
         pop.style.display = pop.style.display === "none" ? "block" : "none";

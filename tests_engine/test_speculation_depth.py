@@ -45,7 +45,7 @@ def _spec_after(engine, seconds):
     return engine.snapshot()["speculative"]
 
 
-def test_snapshot_carries_depth_fields_and_risk_max(gpt2_engine):
+def test_snapshot_carries_depth_fields_and_goodness(gpt2_engine):
     # let speculation run a few rounds
     spec = None
     for _ in range(6):
@@ -53,13 +53,13 @@ def test_snapshot_carries_depth_fields_and_risk_max(gpt2_engine):
         if spec and spec.get("rounds_total", 0) >= 1 and spec.get("futures"):
             break
     assert spec is not None
-    assert "field_risk" in spec
+    assert "field_goodness" in spec
     assert "over_budget" in spec
     assert "rollout_tokens_used" in spec
-    # multi-point risk is exposed per future
+    # multi-point goodness is exposed per future (mean + trough)
     for f in spec["futures"]:
-        assert "risk_max" in f
-        assert f["risk_max"] >= f["risk"] - 1e-6   # peak >= mean
+        assert "goodness" in f and "goodness_min" in f
+        assert f["goodness_min"] <= f["goodness"] + 1e-6   # trough <= mean
     # deeper than the old 6-token default when not heavily truncated
     assert spec["rollout_tokens_used"] > 0
 

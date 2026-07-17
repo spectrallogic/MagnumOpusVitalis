@@ -458,7 +458,6 @@ function applySnapshot(s) {
             ${escapeHtml(f.word || "·")}</span></div>`;
         if (f.chosen) {
             spawnThought(f.word, "future");
-            if ((f.risk ?? 0) > 0.3) AudioFX.cue("risk");
         }
     }
     document.getElementById("h-futures").innerHTML = fh ||

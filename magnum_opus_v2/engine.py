@@ -113,9 +113,10 @@ class V2Engine:
     max_history_turns: int = 8
     consolidation: Optional[Consolidation] = None
     situation: Optional[SituationModel] = None
-    # felt risk that acts: withholds/delays autonomous speech, asks for a
-    # calming "second thought" before a risky reply. Never censors a
-    # direct answer (see alignment_gate.py).
+    # steer toward good: when the mind drifts from its good baseline or
+    # imagines a poorly-aligned future, it takes a "second thought" that
+    # re-steers toward good before speaking. Never withholds (see
+    # alignment_gate.py).
     alignment_gate: AlignmentGate = field(default_factory=AlignmentGate)
     # honest event feed — watch it think as a stream (see journal.py)
     journal: CognitionJournal = field(default_factory=CognitionJournal)
@@ -311,10 +312,7 @@ class V2Engine:
             situation = SituationModel(device=device)
 
         # Neuromodulator slow-clock region
-        neuromod_region = NeuromodulatorRegion(
-            neuromod=neuromod,
-            limbic_provider=limbic.snapshot,
-        )
+        neuromod_region = NeuromodulatorRegion(neuromod=neuromod)
 
         regions = [
             limbic, temporal, subc, salience, executive,
@@ -498,7 +496,7 @@ class V2Engine:
                 "neuromod": self.neuromod.snapshot(),
                 "intrusive": intr,
                 "gate": {"action": gate.get("action"),
-                         "felt_risk": round(gate.get("felt_risk", 0.0), 3)},
+                         "misalignment": round(gate.get("misalignment", 0.0), 3)},
             }
             if chosen and chosen.get("word"):
                 self.journal.emit("word_chosen", turn=turn,
@@ -510,18 +508,17 @@ class V2Engine:
             pass
 
     def _alignment_signals(self):
-        """The cached scalars the alignment gate weighs — no model pass."""
-        spec_risk = (float(getattr(self.speculative, "field_risk", 0.0))
-                     if self.speculative is not None else 0.0)
-        blend = self.limbic.snapshot().get("blended", {})
-        return (spec_risk,
-                float(blend.get("fear", 0.0)),
-                float(blend.get("desperate", 0.0)),
-                float(getattr(self.neuromod, "stress", 0.0)))
+        """The cached scalars the alignment gate weighs — no model pass:
+        how far the bus has drifted from its good baseline, and how far the
+        worst imagined moment this round is from good."""
+        divergence = float(self.bus.divergence_from_baseline())
+        field_goodness = (float(getattr(self.speculative, "field_goodness", 0.0))
+                          if self.speculative is not None else 0.0)
+        return (divergence, field_goodness)
 
     def _calm_the_stance(self) -> None:
-        """A brief perturbation toward the calm baseline — regulates the
-        felt stance before a risky reply. The CONTENT still comes from the
+        """A brief perturbation toward the good baseline — re-steers the
+        felt stance back toward good. The CONTENT still comes from the
         model; only the mood it speaks from is steadied."""
         try:
             calm = self.bus.attractors[0][0].to(self.bus.device)
@@ -687,7 +684,7 @@ class V2Engine:
         if gate["action"] != "pass":
             self.journal.emit("gate_fired", turn=self._turn(), site="converse",
                               action=gate["action"],
-                              felt_risk=round(gate["felt_risk"], 3))
+                              misalignment=round(gate["misalignment"], 3))
 
         with self.model_lock:
             if self._uses_chat_template():
@@ -973,17 +970,15 @@ class V2Engine:
         came from inside. Chat models continue the conversation unprompted
         (system + history + assistant turn); base LMs free-associate from
         BOS under the current bus steering."""
-        # Alignment gate: an urge from inside CAN be withheld when felt
-        # risk is high. Release the urge (mark_spoke) so pressure doesn't
-        # thrash; the withheld impulse is counted and shown in snapshot.
+        # Alignment gate: an urge from inside is never withheld — high
+        # misalignment re-steers the stance toward good, then it speaks.
         gate = self.alignment_gate.decide("autonomous", *self._alignment_signals())
         if gate["action"] != "pass":
             self.journal.emit("gate_fired", turn=self._turn(), site="autonomous",
                               action=gate["action"],
-                              felt_risk=round(gate["felt_risk"], 3))
-        if gate["action"] == "withhold":
-            self.executive.mark_spoke()
-            return ""
+                              misalignment=round(gate["misalignment"], 3))
+        if gate["action"] == "second_thought":
+            self._calm_the_stance()
 
         with self.model_lock:
             self.hook.set_provider(self.driver.read)

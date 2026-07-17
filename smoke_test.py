@@ -96,8 +96,8 @@ def main():
     if spec["futures"]:
         f0 = spec["futures"][0]
         check("futures scored", all(k in f0 for k in
-              ("probability", "benefit", "risk", "utility", "word")),
-              f"top: “{f0['word']}” P={f0['probability']} B={f0['benefit']} R={f0['risk']}")
+              ("probability", "goodness", "goodness_min", "utility", "word")),
+              f"top: “{f0['word']}” P={f0['probability']} good={f0['goodness']}")
         check("exactly one future chosen",
               sum(1 for f in spec["futures"] if f["chosen"]) == 1)
     else:

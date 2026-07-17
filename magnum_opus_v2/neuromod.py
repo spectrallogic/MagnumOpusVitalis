@@ -155,17 +155,13 @@ class NeuromodulatorRegion(Region):
     def __init__(
         self,
         neuromod: NeuromodState,
-        limbic_provider=None,    # callable returning Limbic snapshot dict, or None
         # event sensitivities — how much each observation shifts each scalar
-        stress_per_negative_emotion: float = 0.6,
         stress_per_high_divergence: float = 0.4,
         calm_per_calm_minute: float = 0.3,
         arousal_per_high_velocity: float = 0.5,
     ):
         self.neuromod = neuromod
-        self.limbic_provider = limbic_provider
 
-        self.stress_neg = float(stress_per_negative_emotion)
         self.stress_div = float(stress_per_high_divergence)
         self.calm_gain = float(calm_per_calm_minute)
         self.arousal_vel = float(arousal_per_high_velocity)
@@ -184,21 +180,9 @@ class NeuromodulatorRegion(Region):
         div = float(bus.divergence_from_baseline())
         vel = float(bus.velocity.norm())
 
-        # stress from negative-emotion magnitude (anger/fear/sadness/disgust/desperate)
-        if self.limbic_provider:
-            try:
-                limb = self.limbic_provider() or {}
-                blend = limb.get("blended", {}) if isinstance(limb, dict) else {}
-                neg = sum(
-                    abs(blend.get(e, 0.0))
-                    for e in ("anger", "fear", "sadness", "disgust", "desperate")
-                )
-                if neg > 0.3:
-                    self.neuromod.bump("stress", self.stress_neg * (neg - 0.3))
-            except Exception:  # noqa: BLE001
-                pass
-
-        # stress from high sustained divergence
+        # stress is now a NEUTRAL load signal driven only by sustained
+        # divergence from the (good) baseline — the engine holds no negative
+        # emotion, so there is no dread-from-fear driver any more.
         if div > 0.25:
             self.neuromod.bump("stress", self.stress_div * (div - 0.25))
 

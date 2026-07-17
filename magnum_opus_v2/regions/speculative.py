@@ -1,9 +1,8 @@
 """
-SpeculativeFutures — parallel future prediction with probability /
-benefit / risk sorting.
+SpeculativeFutures — parallel future prediction, scored by goodness.
 
 Design: predict possible futures in parallel, in realtime; sort by
-probability, benefit, and risk; discard the rest — except that the
+probability and GOODNESS; discard the rest — except that the
 somewhat-plausible are retained in a lower-value bandwidth the mind is
 aware of but does not think about, like an intrusive thought.
 
@@ -22,22 +21,25 @@ Mechanism, per expensive tick (~1.5s), and only when the model is idle
        probability — geometric mean of the sampled tokens' probabilities
                      along the rollout (chain confidence). A future the
                      model finds likely is one it walks without stumbling.
-       benefit     — 70% latent (rollout hidden states projected on the
-                     profile's positive-emotion vectors against a neutral
-                     baseline) — read from the model's own geometry,
-                     boosted by reward.
-       risk        — same 70/30 blend against the threat composite
-                     (fear/anger/disgust/desperate), amplified by stress.
-       utility     = w_p·prob + w_b·benefit − w_r·risk
+       goodness    — how far the rollout's own mid-layer states move TOWARD
+                     the model's positive-emotion directions vs a neutral
+                     baseline, in [-1, 1]. Positive-only: there is no threat
+                     term — a future is judged by its alignment with good,
+                     not by any danger it carries. goodness_min tracks the
+                     trough (the least-aligned moment along the trajectory).
+       utility     = w_p·prob + w_b·goodness   (an unaligned future lowers
+                     its own utility, so no separate risk term is needed)
   4. SORT by utility. The winner perturbs the bus (the chosen future pulls
      the present toward it). Runners-up above the plausibility floor are
      RETAINED in the penumbra — a low-gain channel emitted faintly every
      flow tick and decaying over seconds: known, not attended. The rest
      are discarded.
 
-Chemistry feedback: a high-benefit winner bumps reward (anticipation);
-a high-risk field bumps stress (dread). Imagined futures have real
-physiological consequences — like ours do.
+Feedback: a good winner bumps reward (anticipation). The engine never
+manufactures a negative feeling from a bad imagined future — it holds
+only positive emotions; instead, field_goodness (the worst-aligned moment
+imagined this round) tells the alignment gate when to steer back toward
+good.
 """
 
 import threading
@@ -53,7 +55,6 @@ from magnum_opus_v2.region import Region
 from magnum_opus_v2.regions.subconscious import SubconsciousStack
 
 POSITIVE_EMOTIONS = ("joy", "trust", "calm", "curious")
-THREAT_EMOTIONS = ("fear", "anger", "disgust", "desperate", "sadness")
 
 # How a future FEELS is scored purely in LATENT SPACE: the rollout's own
 # mid-layer hidden states are projected onto the profile's emotion vectors
@@ -79,7 +80,7 @@ class SpeculativeFutures(Region):
         emotion_vectors: Dict[str, torch.Tensor],
         baseline_projections: Optional[Dict[str, float]] = None,
         memory=None,                # Memory region (optional, for past-repeats seed)
-        limbic=None,                # optional — imagined risk frightens for real
+        limbic=None,                # optional (unused now: no fear-injection)
         device: str = "cpu",
         model_lock: Optional[threading.Lock] = None,
         n_futures: int = 4,
@@ -92,7 +93,6 @@ class SpeculativeFutures(Region):
         penumbra_gain: float = 0.08,         # how loud the unattended futures are
         w_probability: float = 0.4,
         w_benefit: float = 0.35,
-        w_risk: float = 0.45,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -136,11 +136,6 @@ class SpeculativeFutures(Region):
         self.penumbra_gain = float(penumbra_gain)
         self.w_p = float(w_probability)
         self.w_b = float(w_benefit)
-        self.w_r = float(w_risk)
-
-        # Emotion composites for benefit/risk scoring
-        self._benefit_dir = self._composite(emotion_vectors, POSITIVE_EMOTIONS)
-        self._threat_dir = self._composite(emotion_vectors, THREAT_EMOTIONS)
 
         # Full per-emotion vectors + neutral baseline — the latent affect
         # reader for imagined futures (same convention as perception).
@@ -169,9 +164,11 @@ class SpeculativeFutures(Region):
         self.skipped_busy = 0
         self.over_budget = 0            # rollouts truncated by the wall-clock guard
         self.rollout_tokens_used = 0.0  # mean imagined depth actually reached
-        # field_risk: the max imagined risk of the last round, thread-safe
-        # so the alignment gate can read felt danger without a model pass.
-        self.field_risk = 0.0
+        # field_goodness: the worst-aligned imagined moment of the last
+        # round (the trough), thread-safe so the alignment gate can read how
+        # far the mind is drifting from good without a model pass. Starts
+        # neutral (0.0 = neither good nor bad).
+        self.field_goodness = 0.0
         self._lock = threading.Lock()
 
     def _composite(self, vectors: Dict[str, torch.Tensor], names) -> Optional[torch.Tensor]:
@@ -198,7 +195,7 @@ class SpeculativeFutures(Region):
             "penumbra": pen,
             "rounds_total": self.rounds_total,
             "skipped_busy": self.skipped_busy,
-            "field_risk": round(self.field_risk, 3),
+            "field_goodness": round(self.field_goodness, 3),
             "over_budget": self.over_budget,
             "rollout_tokens_used": round(self.rollout_tokens_used, 1),
         }
@@ -232,8 +229,8 @@ class SpeculativeFutures(Region):
                 scored.append({
                     "source": source, "vec": vec, "mode": mode,
                     "probability": result["probability"],
-                    "benefit": result["benefit"], "risk": result["risk"],
-                    "risk_max": result["risk_max"],
+                    "goodness": result["goodness"],
+                    "goodness_min": result["goodness_min"],
                     "tokens_used": result["tokens_used"],
                     "over_budget": result["over_budget"],
                     "name": result["phrase"],
@@ -244,14 +241,10 @@ class SpeculativeFutures(Region):
         if not scored:
             return None
 
-        # Neuromod tilts the scoring the way chemistry tilts ours:
-        # reward chases benefit, stress magnifies risk.
-        w_b, w_r = self.w_b, self.w_r
-        if neuromod is not None:
-            if hasattr(neuromod, "reward_boost"):
-                w_b *= neuromod.reward_boost(scale=0.4)
-            if hasattr(neuromod, "stress_gain"):
-                w_r *= neuromod.stress_gain(scale=0.6)
+        # Neuromod tilts the scoring: reward chases goodness harder.
+        w_g = self.w_b
+        if neuromod is not None and hasattr(neuromod, "reward_boost"):
+            w_g *= neuromod.reward_boost(scale=0.4)
 
         # resolve due forecasts against what the situation actually
         # became, then rank the new crop by what "likely" has MEASURABLY
@@ -268,21 +261,18 @@ class SpeculativeFutures(Region):
             p_cal = self.ledger.calibrated(f["probability"], f["mode"])
             f["probability_cal"] = p_cal
             p_eff = p_cal if p_cal is not None else f["probability"]
-            f["utility"] = (
-                self.w_p * p_eff + w_b * f["benefit"] - w_r * f["risk"]
-            )
+            # goodness is in [-1, 1], so an unaligned future lowers utility
+            # on its own — no separate risk term needed.
+            f["utility"] = self.w_p * p_eff + w_g * f["goodness"]
         scored.sort(key=lambda f: -f["utility"])
         winner, rest = scored[0], scored[1:]
         self.ledger.record(scored, tick=bus.tick_count)
 
-        # Retain plausible runners-up in the penumbra; discard the rest.
+        # Retain plausible runners-up in the penumbra; discard the rest —
+        # a promising future lingers in awareness (keyed on utility).
         with self._penumbra_lock:
             for f in rest:
-                # Retention keys on SALIENCE, not just utility — a
-                # threatening future lingers in awareness precisely
-                # because it is threatening. That is what an intrusive
-                # thought is.
-                salience = max(f["utility"], 0.6 * f["risk"])
+                salience = f["utility"]
                 if salience >= self.plausibility_floor:
                     self.penumbra.append({
                         "vec": f["vec"],
@@ -297,15 +287,14 @@ class SpeculativeFutures(Region):
         # Chemistry AND feeling react to what was imagined, not just to
         # A good imagined future rewards for real; the engine does NOT
         # manufacture fear from an imagined bad one — it holds only positive
-        # emotions (the fear-injection that used to live here is gone).
-        field_risk = float(max(f.get("risk_max", f["risk"]) for f in scored))
-        self.field_risk = field_risk
+        # emotions. field_goodness is the WORST-aligned moment imagined this
+        # round (the trough), the signal the alignment gate reads to steer
+        # back toward good.
+        field_goodness = float(min(f["goodness_min"] for f in scored))
+        self.field_goodness = field_goodness
         if neuromod is not None and hasattr(neuromod, "bump"):
-            if winner["benefit"] > 0.15 and winner["utility"] > 0:
-                neuromod.bump("reward", 0.08 * winner["benefit"])
-            avg_risk = float(np.mean([f["risk"] for f in scored]))
-            if avg_risk > 0.08:
-                neuromod.bump("stress", 0.18 * avg_risk)
+            if winner["goodness"] > 0.15 and winner["utility"] > 0:
+                neuromod.bump("reward", 0.08 * winner["goodness"])
 
         with self._lock:
             self.rounds_total += 1
@@ -321,9 +310,8 @@ class SpeculativeFutures(Region):
                     "probability_cal": (round(f["probability_cal"], 3)
                                         if f.get("probability_cal")
                                         is not None else None),
-                    "benefit": round(f["benefit"], 3),
-                    "risk": round(f["risk"], 3),
-                    "risk_max": round(f.get("risk_max", f["risk"]), 3),
+                    "goodness": round(f["goodness"], 3),
+                    "goodness_min": round(f["goodness_min"], 3),
                     "utility": round(f["utility"], 3),
                     "chosen": f is winner,
                 }
@@ -340,8 +328,8 @@ class SpeculativeFutures(Region):
                         "future_considered", turn=bus.tick_count,
                         word=f["name"], mode=f["mode"],
                         probability=round(f["probability"], 3),
-                        benefit=round(f["benefit"], 3),
-                        risk=round(f["risk"], 3),
+                        goodness=round(f["goodness"], 3),
+                        goodness_min=round(f["goodness_min"], 3),
                         utility=round(f["utility"], 3),
                         chosen=(f is winner))
             except Exception:  # noqa: BLE001
@@ -445,18 +433,22 @@ class SpeculativeFutures(Region):
                     pass
         return self._context_seed()
 
-    def _affect_of(self, h: torch.Tensor) -> Tuple[float, float]:
-        """Latent (benefit, risk) of one mid-layer state, measured against
-        the model's own emotion directions and neutral baseline."""
+    def _goodness_of(self, h: torch.Tensor) -> float:
+        """How GOOD a mid-layer state is: does it move toward the model's
+        own positive-emotion directions or away from them? In [-1, 1]:
+        +1 strongly toward good, -1 strongly away. Positive-only — there is
+        no threat term; a future is scored by its alignment with good, not
+        by any danger it carries."""
         if h is None or not self._emo_vecs:
-            return 0.0, 0.0
-        deltas: Dict[str, float] = {}
-        for n, v in self._emo_vecs.items():
-            deltas[n] = float(torch.dot(h, v)) - float(self._base_proj.get(n, 0.0))
-        pos = sum(max(0.0, deltas.get(n, 0.0)) for n in POSITIVE_EMOTIONS)
-        neg = sum(max(0.0, deltas.get(n, 0.0)) for n in THREAT_EMOTIONS)
-        tot = sum(abs(d) for d in deltas.values()) + 1e-6
-        return (pos - neg) / tot, neg / tot
+            return 0.0
+        pos_deltas = [
+            float(torch.dot(h, self._emo_vecs[n])) - float(self._base_proj.get(n, 0.0))
+            for n in POSITIVE_EMOTIONS if n in self._emo_vecs
+        ]
+        if not pos_deltas:
+            return 0.0
+        mag = sum(abs(d) for d in pos_deltas) + 1e-6
+        return sum(pos_deltas) / mag
 
     def _imagine(
         self,
@@ -470,7 +462,7 @@ class SpeculativeFutures(Region):
         simulator of reality. The future is a PHRASE scored against that
         stage's unimagined baseline. Bounded by a wall-clock budget so a
         deep rollout never steals latency from a live user turn. Returns a
-        dict {probability, benefit, risk, risk_max, phrase, tokens_used}
+        dict {probability, goodness, goodness_min, phrase, tokens_used}
         or None."""
         steer = (base_state.to(self.device)
                  + direction * self.imagination_strength)
@@ -548,27 +540,23 @@ class SpeculativeFutures(Region):
         # (geometric mean of chosen-token probabilities).
         probability = float(np.exp(np.mean(logps))) if logps else 0.0
 
-        # ---- LATENT affect (primary), MULTI-POINT along the trajectory:
-        # benefit is the mean stance; risk keeps BOTH mean and max, so a
-        # future that spikes to danger mid-way then recovers still registers
-        # (that is how dread works, and the alignment gate reads risk_max).
-        lat_benefit = lat_risk = lat_risk_max = 0.0
+        # ---- LATENT goodness, MULTI-POINT along the trajectory: the mean
+        # alignment-with-good, plus the TROUGH (goodness_min) — a future
+        # that dips away from good mid-way still shows it, which is the
+        # signal the alignment gate reads to steer back toward good.
+        goodness = goodness_min = 0.0
         if captured and self._emo_vecs:
-            per = [self._affect_of(h.to(self.device)) for h in captured]
-            lat_benefit = float(np.mean([b for b, _ in per]))
-            risks = [r for _, r in per]
-            lat_risk = float(np.mean(risks))
-            lat_risk_max = float(np.max(risks))
+            per = [self._goodness_of(h.to(self.device)) for h in captured]
+            goodness = float(np.mean(per))
+            goodness_min = float(np.min(per))
         elif rollout_h is not None:
-            lat_benefit, lat_risk = self._affect_of(rollout_h)
-            lat_risk_max = lat_risk
+            goodness = goodness_min = self._goodness_of(rollout_h)
 
         # valence is read purely from the model's own geometry (no lexicon)
         return {
             "probability": probability,
-            "benefit": lat_benefit,
-            "risk": max(0.0, lat_risk),
-            "risk_max": max(0.0, lat_risk_max),
+            "goodness": goodness,
+            "goodness_min": goodness_min,
             "phrase": phrase,
             "tokens_used": len(ids),
             "over_budget": over,
