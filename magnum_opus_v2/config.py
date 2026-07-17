@@ -50,11 +50,24 @@ class ClockConfig:
 
 
 @dataclass
+class SpeculativeConfig:
+    """How deeply the engine imagines. Rollouts use the frozen LLM as a
+    forward simulator of reality; deeper rollouts read that predictor
+    harder, bounded so they never steal latency from a live user turn."""
+    n_futures: int = 4
+    rollout_tokens: int = 14          # imagined depth (was 6): futures are phrases
+    rollout_budget_ms: float = 250.0  # wall-clock cap on one candidate's rollout
+    chained_continuation_tokens: int = 8  # WORLD mode reads its own trajectory further
+    lexicon_weight: float = 0.3       # latent affect carries the other 0.7
+
+
+@dataclass
 class V2Config:
     """Top-level v2 config. Compose nested configs."""
     hidden_dim: int = 768  # default for gpt2; overridden when a model is attached
     device: str = "cpu"
     bus: BusConfig = field(default_factory=BusConfig)
     clock: ClockConfig = field(default_factory=ClockConfig)
+    spec: SpeculativeConfig = field(default_factory=SpeculativeConfig)
     # Whether to print per-clock errors. Useful during dev.
     verbose_errors: bool = True

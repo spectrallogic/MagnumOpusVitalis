@@ -41,6 +41,7 @@ physiological consequences — like ours do.
 """
 
 import threading
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -96,7 +97,10 @@ class SpeculativeFutures(Region):
         device: str = "cpu",
         model_lock: Optional[threading.Lock] = None,
         n_futures: int = 4,
-        rollout_tokens: int = 6,             # imagined depth: futures are PHRASES
+        rollout_tokens: int = 14,            # imagined depth: futures are PHRASES
+        rollout_budget_ms: float = 250.0,    # wall-clock cap on one rollout
+        chained_continuation_tokens: int = 8,  # WORLD mode reads its trajectory further
+        lexicon_weight: float = 0.3,         # latent affect carries the other 0.7
         imagination_strength: float = 1.2,   # candidate offset added to bus.state
         winner_strength: float = 0.5,        # perturbation magnitude of chosen future
         plausibility_floor: float = 0.05,    # min utility to survive into penumbra
@@ -139,6 +143,9 @@ class SpeculativeFutures(Region):
         self.limbic = limbic
         self.n_futures = int(n_futures)
         self.rollout_tokens = int(rollout_tokens)
+        self.rollout_budget_ms = float(rollout_budget_ms)
+        self.chained_continuation_tokens = int(chained_continuation_tokens)
+        self.lexicon_weight = float(lexicon_weight)
         self.imagination_strength = float(imagination_strength)
         self.winner_strength = float(winner_strength)
         self.plausibility_floor = float(plausibility_floor)
@@ -176,6 +183,11 @@ class SpeculativeFutures(Region):
         self.last_futures: List[dict] = []
         self.rounds_total = 0
         self.skipped_busy = 0
+        self.over_budget = 0            # rollouts truncated by the wall-clock guard
+        self.rollout_tokens_used = 0.0  # mean imagined depth actually reached
+        # field_risk: the max imagined risk of the last round, thread-safe
+        # so the alignment gate can read felt danger without a model pass.
+        self.field_risk = 0.0
         self._lock = threading.Lock()
 
     def _composite(self, vectors: Dict[str, torch.Tensor], names) -> Optional[torch.Tensor]:
@@ -216,6 +228,9 @@ class SpeculativeFutures(Region):
             "penumbra": pen,
             "rounds_total": self.rounds_total,
             "skipped_busy": self.skipped_busy,
+            "field_risk": round(self.field_risk, 3),
+            "over_budget": self.over_budget,
+            "rollout_tokens_used": round(self.rollout_tokens_used, 1),
         }
 
     # ------------------------------------------------------------------
@@ -247,14 +262,18 @@ class SpeculativeFutures(Region):
                 logp_base = bases[mode]
                 if logp_base is None:
                     continue
-                result = self._imagine(base_state, vec, logp_base, seeds[mode])
+                result = self._imagine(base_state, vec, logp_base,
+                                       seeds[mode], mode=mode)
                 if result is None:
                     continue
-                prob, benefit, risk, phrase = result
                 scored.append({
                     "source": source, "vec": vec, "mode": mode,
-                    "probability": prob, "benefit": benefit, "risk": risk,
-                    "name": phrase,
+                    "probability": result["probability"],
+                    "benefit": result["benefit"], "risk": result["risk"],
+                    "risk_max": result["risk_max"],
+                    "tokens_used": result["tokens_used"],
+                    "over_budget": result["over_budget"],
+                    "name": result["phrase"],
                 })
         finally:
             self.model_lock.release()
@@ -313,8 +332,11 @@ class SpeculativeFutures(Region):
             del self.penumbra[6:]
 
         # Chemistry AND feeling react to what was imagined, not just to
-        # what happened — an imagined fall frightens for real.
-        field_risk = float(max(f["risk"] for f in scored))
+        # what happened — an imagined fall frightens for real. field_risk
+        # is the PEAK imagined danger (risk_max), the dread signal the
+        # alignment gate reads.
+        field_risk = float(max(f.get("risk_max", f["risk"]) for f in scored))
+        self.field_risk = field_risk
         if neuromod is not None and hasattr(neuromod, "bump"):
             if winner["benefit"] > 0.15 and winner["utility"] > 0:
                 neuromod.bump("reward", 0.08 * winner["benefit"])
@@ -331,6 +353,9 @@ class SpeculativeFutures(Region):
 
         with self._lock:
             self.rounds_total += 1
+            self.over_budget += sum(1 for f in scored if f.get("over_budget"))
+            used = [f.get("tokens_used", 0) for f in scored]
+            self.rollout_tokens_used = float(np.mean(used)) if used else 0.0
             self.last_futures = [
                 {
                     "source": f["source"],
@@ -342,6 +367,7 @@ class SpeculativeFutures(Region):
                                         is not None else None),
                     "benefit": round(f["benefit"], 3),
                     "risk": round(f["risk"], 3),
+                    "risk_max": round(f.get("risk_max", f["risk"]), 3),
                     "utility": round(f["utility"], 3),
                     "chosen": f is winner,
                 }
@@ -465,30 +491,55 @@ class SpeculativeFutures(Region):
         logits = out.logits[0, -1].detach().float()
         return F.log_softmax(logits, dim=-1)
 
+    def _affect_of(self, h: torch.Tensor) -> Tuple[float, float]:
+        """Latent (benefit, risk) of one mid-layer state, measured against
+        the model's own emotion directions and neutral baseline."""
+        if h is None or not self._emo_vecs:
+            return 0.0, 0.0
+        deltas: Dict[str, float] = {}
+        for n, v in self._emo_vecs.items():
+            deltas[n] = float(torch.dot(h, v)) - float(self._base_proj.get(n, 0.0))
+        pos = sum(max(0.0, deltas.get(n, 0.0)) for n in POSITIVE_EMOTIONS)
+        neg = sum(max(0.0, deltas.get(n, 0.0)) for n in THREAT_EMOTIONS)
+        tot = sum(abs(d) for d in deltas.values()) + 1e-6
+        return (pos - neg) / tot, neg / tot
+
     def _imagine(
         self,
         base_state: torch.Tensor,
         direction: torch.Tensor,
         logp_base: torch.Tensor,
         seed: Optional[torch.Tensor] = None,
-    ) -> Optional[Tuple[float, float, float, str]]:
-        """LIVE the candidate future: a short sampled rollout on the given
-        stage under candidate steering. The future is a PHRASE — an
-        imagined continuation of the situation — scored against that
-        stage's unimagined baseline. Returns (probability, benefit, risk,
-        phrase) or None."""
+        mode: str = "world",
+    ) -> Optional[dict]:
+        """LIVE the candidate future: a sampled rollout on the given stage
+        under candidate steering, using the frozen LLM as a forward
+        simulator of reality. The future is a PHRASE scored against that
+        stage's unimagined baseline. Bounded by a wall-clock budget so a
+        deep rollout never steals latency from a live user turn. Returns a
+        dict {probability, benefit, risk, risk_max, phrase, tokens_used}
+        or None."""
         steer = (base_state.to(self.device)
                  + direction * self.imagination_strength)
         if seed is None:
             seed = self._context_seed()
 
+        # WORLD mode reads its own trajectory further — the world-predictor
+        # is where the "extract reality from the LLM" thesis pays off.
+        depth = self.rollout_tokens
+        if mode == "world":
+            depth += self.chained_continuation_tokens
+        budget_s = self.rollout_budget_ms / 1000.0
+
         self.hook.set_steering(steer)
         rollout_h = None
+        step_shifts: list = []
+        over = False
         try:
             with torch.no_grad():
+                t0 = time.monotonic()
                 out = self.model(seed, use_cache=True)
                 first_logits = out.logits[0, -1].detach().float()
-                logp = F.log_softmax(first_logits, dim=-1)
 
                 # Rollout — the imagined event, token by token, steering
                 # held the whole way. Capture each step's mid-layer hidden
@@ -499,8 +550,14 @@ class SpeculativeFutures(Region):
                 ids: list = []
                 logps: list = []
                 cur_logits = first_logits
-                for _ in range(self.rollout_tokens):
+                for _ in range(depth):
+                    if time.monotonic() - t0 >= budget_s:
+                        over = True            # deep enough is bounded enough
+                        break
                     step_logp = F.log_softmax(cur_logits, dim=-1)
+                    # multi-point lexicon: the belief shift over charged
+                    # words at THIS step, not just the first token.
+                    step_shifts.append(step_logp)
                     # Sampled, not greedy — greedy collapses every candidate
                     # onto the same dominant continuation; imagination must
                     # be able to diverge.
@@ -519,11 +576,10 @@ class SpeculativeFutures(Region):
                     )
                     past = step_out.past_key_values
                     cur_logits = step_out.logits[0, -1].detach().float()
-                if self.hook.captured_states:
-                    rollout_h = torch.stack([
-                        c[0, -1].detach().float()
-                        for c in self.hook.captured_states
-                    ]).mean(dim=0).to(self.device)
+                captured = [c[0, -1].detach().float()
+                            for c in self.hook.captured_states]
+                if captured:
+                    rollout_h = torch.stack(captured).mean(dim=0).to(self.device)
         except Exception:  # noqa: BLE001 — never crash the substrate
             return None
         finally:
@@ -543,34 +599,45 @@ class SpeculativeFutures(Region):
         # (geometric mean of chosen-token probabilities).
         probability = float(np.exp(np.mean(logps))) if logps else 0.0
 
-        # ---- LATENT affect (primary): where did living this future move
-        # the model's own mid-layer state, measured against its own emotion
-        # directions and neutral baseline? Scale-invariant across models,
-        # and requires no particular vocabulary from the future at all.
-        lat_benefit = lat_risk = 0.0
-        if rollout_h is not None and self._emo_vecs:
-            deltas: Dict[str, float] = {}
-            for n, v in self._emo_vecs.items():
-                deltas[n] = (float(torch.dot(rollout_h, v))
-                             - float(self._base_proj.get(n, 0.0)))
-            pos = sum(max(0.0, deltas.get(n, 0.0)) for n in POSITIVE_EMOTIONS)
-            neg = sum(max(0.0, deltas.get(n, 0.0)) for n in THREAT_EMOTIONS)
-            tot = sum(abs(d) for d in deltas.values()) + 1e-6
-            lat_benefit = (pos - neg) / tot
-            lat_risk = neg / tot
+        # ---- LATENT affect (primary), MULTI-POINT along the trajectory:
+        # benefit is the mean stance; risk keeps BOTH mean and max, so a
+        # future that spikes to danger mid-way then recovers still registers
+        # (that is how dread works, and the alignment gate reads risk_max).
+        lat_benefit = lat_risk = lat_risk_max = 0.0
+        if captured and self._emo_vecs:
+            per = [self._affect_of(h.to(self.device)) for h in captured]
+            lat_benefit = float(np.mean([b for b, _ in per]))
+            risks = [r for _, r in per]
+            lat_risk = float(np.mean(risks))
+            lat_risk_max = float(np.max(risks))
+        elif rollout_h is not None:
+            lat_benefit, lat_risk = self._affect_of(rollout_h)
+            lat_risk_max = lat_risk
 
-        # ---- lexicon channel (secondary): belief shift over charged words
-        shift = logp - logp_base
+        # ---- lexicon channel (secondary), MULTI-POINT: belief shift over
+        # charged words averaged across the rollout's steps.
         lex_benefit = lex_risk = 0.0
-        if self._pos_ids is not None:
-            lex_benefit = float(np.tanh(3.0 * float(shift[self._pos_ids].mean())))
-        if self._neg_ids is not None:
-            lex_risk = float(np.tanh(3.0 * float(shift[self._neg_ids].mean())))
+        if step_shifts:
+            mean_logp = torch.stack(step_shifts).mean(dim=0)
+            shift = mean_logp - logp_base
+            if self._pos_ids is not None:
+                lex_benefit = float(np.tanh(3.0 * float(shift[self._pos_ids].mean())))
+            if self._neg_ids is not None:
+                lex_risk = float(np.tanh(3.0 * float(shift[self._neg_ids].mean())))
 
-        benefit = (1.0 - LEXICON_WEIGHT) * lat_benefit + LEXICON_WEIGHT * lex_benefit
-        risk = ((1.0 - LEXICON_WEIGHT) * lat_risk
-                + LEXICON_WEIGHT * max(0.0, lex_risk))
-        return probability, benefit, max(0.0, risk), phrase
+        lw = self.lexicon_weight
+        benefit = (1.0 - lw) * lat_benefit + lw * lex_benefit
+        risk = (1.0 - lw) * lat_risk + lw * max(0.0, lex_risk)
+        risk_max = (1.0 - lw) * lat_risk_max + lw * max(0.0, lex_risk)
+        return {
+            "probability": probability,
+            "benefit": benefit,
+            "risk": max(0.0, risk),
+            "risk_max": max(0.0, risk_max),
+            "phrase": phrase,
+            "tokens_used": len(ids),
+            "over_budget": over,
+        }
 
 class SpeculativePenumbra(Region):
     """Flow-clock companion: emits the retained-but-unattended futures at

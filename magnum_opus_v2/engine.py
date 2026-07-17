@@ -279,6 +279,11 @@ class V2Engine:
                 baseline_projections=profile.baseline.projections,
                 memory=memory, limbic=limbic,
                 device=device, model_lock=model_lock,
+                n_futures=cfg.spec.n_futures,
+                rollout_tokens=cfg.spec.rollout_tokens,
+                rollout_budget_ms=cfg.spec.rollout_budget_ms,
+                chained_continuation_tokens=cfg.spec.chained_continuation_tokens,
+                lexicon_weight=cfg.spec.lexicon_weight,
             )
             penumbra = speculative.penumbra_companion()
 
