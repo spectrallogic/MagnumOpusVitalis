@@ -197,3 +197,51 @@ class ForecastLedger:
                 for f in self.resolved[-6:]
             ]
         return m
+
+    # ------------------------------------------------------------------
+    # persistence — the earned calibration map survives a nap. Open
+    # deadlines are stored as remaining seconds (a monotonic-clock
+    # timestamp is meaningless across a process restart).
+    # ------------------------------------------------------------------
+    def state_dict(self) -> dict:
+        now = time.monotonic()
+        with self._lock:
+            open_ = []
+            for fc in self.open:
+                remaining = fc["deadline"] - now
+                if remaining <= 0:
+                    continue                     # would resolve/expire on load
+                d = {k: v for k, v in fc.items()
+                     if k not in ("vec", "ts", "deadline")}
+                d["remaining_s"] = float(remaining)
+                d["vec"] = fc["vec"].detach().float().cpu()
+                open_.append(d)
+            return {
+                "open": open_,
+                "resolved": [dict(f) for f in self.resolved[-512:]],
+                "bins": {m: [list(b) for b in bins]
+                         for m, bins in self._bins.items()},
+                "next_id": next(self._ids),      # consumes one; fine
+            }
+
+    def load_state_dict(self, st: dict) -> None:
+        if not st:
+            return
+        now = time.monotonic()
+        with self._lock:
+            self.open = []
+            for d in st.get("open", []):
+                remaining = float(d.get("remaining_s", 0.0))
+                if remaining <= 0:
+                    continue
+                fc = {k: v for k, v in d.items() if k != "remaining_s"}
+                fc["ts"] = now
+                fc["deadline"] = now + remaining
+                if not isinstance(fc.get("vec"), torch.Tensor):
+                    continue
+                self.open.append(fc)
+            self.resolved = [dict(f) for f in st.get("resolved", [])]
+            self._bins = {m: [list(b) for b in bins]
+                          for m, bins in st.get("bins", {}).items()}
+            start = int(st.get("next_id", 1))
+            self._ids = itertools.count(max(1, start))

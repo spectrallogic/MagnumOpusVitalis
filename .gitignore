@@ -9,3 +9,6 @@ __pycache__/
 face_check.js
 vox_check.js
 /primordium/runs/
+
+# engine naps (per-model runtime state)
+/state/

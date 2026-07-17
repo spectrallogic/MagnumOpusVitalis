@@ -197,6 +197,8 @@ def main():
                         help="Use saved profile (auto-creates if missing)")
     parser.add_argument("--port", type=int, default=5000, help="Server port")
     parser.add_argument("--host", default="127.0.0.1", help="Server host")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume the last saved engine nap (and save on exit)")
     args = parser.parse_args()
 
     print("=" * 50)
@@ -217,6 +219,14 @@ def main():
         profile = create_profile(args.model, device=device)
 
     engine = V2Engine.from_profile(model, tokenizer, profile, device=device)
+    if args.resume:
+        try:
+            if engine.load_state():           # load BEFORE start()
+                print("  Resumed the last engine nap (a restart is a nap)")
+            else:
+                print("  No saved nap found — starting fresh")
+        except RuntimeError as e:
+            print(f"  Could not resume: {e}")
     engine.start()
     print("  V2 substrate started (FlowRunner active)")
 
@@ -229,7 +239,12 @@ def main():
     try:
         app.run(host=args.host, port=args.port, debug=False)
     finally:
-        engine.stop()
+        # on --resume, save the nap on the way out (default per-model path)
+        save_path = None
+        if args.resume:
+            from magnum_opus_v2.persistence import default_path
+            save_path = default_path(args.model)
+        engine.stop(save_path=save_path)
 
 
 if __name__ == "__main__":

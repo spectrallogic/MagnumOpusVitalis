@@ -415,8 +415,27 @@ class V2Engine:
     def start(self) -> None:
         self.flow.start()
 
-    def stop(self) -> None:
+    def stop(self, save_path=None) -> None:
         self.flow.stop()
+        # a restart is a nap: snapshot AFTER the flow thread has joined,
+        # so no tick races the save. Best-effort — never crash on exit.
+        if save_path is not None:
+            try:
+                self.save_state(save_path)
+            except Exception:  # noqa: BLE001
+                pass
+
+    # ------------------------------------------------------------------
+    # Persistence — "a restart is a nap, not a death" (see persistence.py)
+    # ------------------------------------------------------------------
+    def save_state(self, path=None):
+        from magnum_opus_v2 import persistence
+        return persistence.save_engine(self, path)
+
+    def load_state(self, path=None) -> bool:
+        """Load a saved nap into this (built, not-yet-started) engine."""
+        from magnum_opus_v2 import persistence
+        return persistence.load_engine(self, path)
 
     # ------------------------------------------------------------------
     # External entry points
