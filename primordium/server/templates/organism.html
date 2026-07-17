@@ -12,7 +12,9 @@
 <div class="vignette"></div>
 
 <!-- PULSE: the primary view. Every block is one real computation,
-     drained from the organism's event ring — nothing decorative. -->
+     drained from the organism's event ring — nothing decorative. A stale
+     stream (>4s) greys and freezes the field and silences all audio, so
+     a dead organism reads as dead. -->
 <div id="pulse-panel">
     <canvas id="pulse"></canvas>
     <div id="pulse-tip"></div>

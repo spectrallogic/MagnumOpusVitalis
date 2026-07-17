@@ -8,6 +8,11 @@ const lerp = (a, b, t) => a + (b - a) * t;
 
 let ws = null, embodied = false, state = null;
 let sparkHist = [];
+// liveness gate (mirrors the engine faces): no fresh state in 4s => the
+// pulse field greys and freezes and all audio goes silent, so a dead
+// organism visibly and audibly reads as dead.
+let lastMsgAt = 0, live = false, motionGate = 0;
+const isFresh = () => live && (performance.now() - lastMsgAt < 4000);
 const DRIVE_ORDER = ["energy", "competence", "novelty", "social", "vitality"];
 const TIDE_ORDER = ["arousal", "reward", "calm"];
 const TIDE_COLORS = { arousal: "#ffd479", reward: "#9bffa0",
@@ -23,6 +28,13 @@ function connect() {
     };
     ws.onclose = () => {
         $("status").textContent = "disconnected — retrying";
+        live = false;
+        // silence immediately — never hold a last gain as a residual drone
+        try {
+            const t = audioCtx ? audioCtx.currentTime : 0;
+            if (synth) synth.master.gain.setTargetAtTime(0, t, 0.05);
+            if (mindSynth) mindSynth.master.gain.setTargetAtTime(0, t, 0.1);
+        } catch (e) {}
         setTimeout(connect, 2500);
     };
     ws.onmessage = ev => {
@@ -36,6 +48,8 @@ function connect() {
                     : "watching";
             } else if (d.t === "state") {
                 state = d;
+                live = true;
+                lastMsgAt = performance.now();
                 updateHud(d);
             } else if (d.t === "pulse") {
                 onPulse(d.events || []);
@@ -185,7 +199,8 @@ function updateVoice(v) {
         if (synth.bands[i])
             synth.bands[i].g.gain.setTargetAtTime(g * 0.5, t, 0.03);
     });
-    const amp = muted ? 0 : (v.amp || 0) * 0.25;
+    // a dead stream makes no sound even if a stale voice payload lingers
+    const amp = (muted || !isFresh()) ? 0 : (v.amp || 0) * 0.25;
     synth.master.gain.setTargetAtTime(amp, t, 0.03);
 }
 function drawSpectrogram() {
@@ -561,6 +576,9 @@ function drawPulse(now) {
     requestAnimationFrame(drawPulse);
     const w = pulseCv.width, h = pulseCv.height;
     if (!w || !h) { pulseResize(); return; }
+    // liveness gate: ease toward 1 while fresh, toward 0 when the stream
+    // goes stale, so the field greys out instead of lying about being alive
+    motionGate = lerp(motionGate, isFresh() ? 1 : 0, 0.08);
     pxc.clearRect(0, 0, w, h);
     // zone columns
     pxc.font = "9px Consolas, monospace";
@@ -581,7 +599,8 @@ function drawPulse(now) {
         b.y = 24 + b.lane * (h - 36);
         const fade = t > 1 ? clamp(1 - (t - 1) / 0.8, 0, 1) : 1;
         const col = KIND_COLORS[b.e.kind] || "#9be8d8";
-        pxc.globalAlpha = fade * (b.e.kind === "tick" ? 0.45 : 0.9);
+        // blocks read the gated clock — motion (and life) freezes offline
+        pxc.globalAlpha = fade * (b.e.kind === "tick" ? 0.45 : 0.9) * motionGate;
         pxc.fillStyle = col;
         pxc.fillRect(b.x - b.size / 2, b.y - b.size / 2, b.size, b.size);
         if (b.e.n) {
@@ -591,6 +610,16 @@ function drawPulse(now) {
         pxc.globalAlpha = 1;
         return true;
     });
+    // grey wash when the stream is stale — a frozen grey field = offline
+    if (motionGate < 0.98) {
+        pxc.fillStyle = `rgba(6,9,12,${(1 - motionGate) * 0.72})`;
+        pxc.fillRect(0, 0, w, h);
+        if (motionGate < 0.5) {
+            pxc.fillStyle = "rgba(120,130,150,0.5)";
+            pxc.font = "11px Consolas, monospace";
+            pxc.fillText("— organism offline —", w / 2, h / 2);
+        }
+    }
 }
 requestAnimationFrame(drawPulse);
 
