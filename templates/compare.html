@@ -200,6 +200,42 @@
         }
         .cell.active { background: var(--engine); color: var(--bg); border-color: var(--engine); }
         .level.locked { opacity: .35; }
+        /* --- thought-stream timeline --- */
+        .timeline-panel { display: flex; flex-direction: column; min-height: 220px; }
+        #timeline-list {
+            overflow-y: auto; flex: 1; font-size: 11px; line-height: 1.5;
+            font-family: "SF Mono", Consolas, monospace; padding-right: 4px;
+        }
+        .tl-row { display: flex; gap: 7px; align-items: baseline; padding: 2px 4px;
+                  border-radius: 4px; }
+        .tl-row:hover { background: rgba(122,162,247,0.08); }
+        .tl-row.hot { background: rgba(224,175,104,0.14); }
+        .tl-time { color: #565f89; flex: 0 0 42px; }
+        .tl-badge { flex: 0 0 88px; font-weight: 600; letter-spacing: 0.02em; }
+        .tl-body { color: #a9b1d6; flex: 1; white-space: nowrap;
+                   overflow: hidden; text-overflow: ellipsis; }
+        .tl-sep { border-top: 1px dashed rgba(122,162,247,0.25);
+                  margin: 4px 0 2px; color: #7aa2f7; font-weight: 600;
+                  padding: 2px 4px; }
+        .why-btn { cursor: pointer; color: #7aa2f7; font-size: 10px;
+                   margin-left: 6px; opacity: 0.7; user-select: none; }
+        .why-btn:hover { opacity: 1; text-decoration: underline; }
+        .why-pop { background: #12141c; border: 1px solid var(--border);
+                   border-radius: 6px; padding: 8px 10px; margin-top: 5px;
+                   font-size: 11px; line-height: 1.6; }
+        .why-pop .k { color: #565f89; }
+        body.timeline-focus .timeline-panel { min-height: 60vh; }
+
+        /* --- responsive: the desktop demo must degrade to a phone --- */
+        @media (max-width: 1100px) {
+            main { grid-template-columns: 1fr; height: auto; min-height: calc(100vh - 48px); }
+            .dash-area { max-height: none; }
+        }
+        @media (max-width: 680px) {
+            .chat-cols { grid-template-columns: 1fr; }
+            header { flex-wrap: wrap; gap: 6px; }
+            .dash-area { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
@@ -234,6 +270,17 @@
     </div>
 
     <div class="dash-area" id="dash">
+        <div class="panel timeline-panel" id="timeline">
+            <h3>Thought stream <span class="val" id="tl-count" style="text-transform:none"></span></h3>
+            <div id="timeline-list"></div>
+            <div class="row" style="border-top:1px solid var(--border);padding-top:5px">
+                <span class="label" style="font-size:9px">session timeline — cleared on reload / engine restart</span>
+            </div>
+        </div>
+        <div class="panel" id="memory">
+            <h3>Memory browser <span class="val" id="mem-count" style="text-transform:none"></span></h3>
+            <div id="memory-list" style="max-height:150px;overflow-y:auto;font-size:11px"></div>
+        </div>
         <div class="panel">
             <h3>Latent Bus <span class="val" id="bus-ticks-h" style="text-transform:none"></span></h3>
             <canvas id="bus-spark" width="600" height="92"></canvas>
@@ -374,6 +421,74 @@ function signedBars(parent, values, names, max = 1.0) {
             <span class="val">${v.toFixed(2)}</span>`;
         parent.appendChild(row);
     }
+}
+
+/* --- thought-stream timeline ------------------------------------- */
+/* every row IS a real journal event (see magnum_opus_v2/journal.py) —
+   nothing here is synthesized. Bounded client ring; newest at bottom. */
+const TL_META = {
+    future_considered: { c: "#7dcfff", label: "imagines" },
+    word_chosen:       { c: "#bb9af7", label: "chooses" },
+    emotion_snapshot:  { c: "#e0af68", label: "feels" },
+    forecast_opened:   { c: "#9ece6a", label: "predicts" },
+    forecast_resolved: { c: "#f7768e", label: "resolves" },
+    gate_fired:        { c: "#ff9e64", label: "gate" },
+    reply_emitted:     { c: "#7aa2f7", label: "reply" },
+};
+let tlRing = [], tlLastId = 0, tlSeen = new Set();
+function tlBody(e) {
+    const p = e.payload || {};
+    switch (e.kind) {
+        case "future_considered":
+            return `imagined “${p.word}” [${(p.mode||"")[0]||"?"}] `
+                 + `P=${p.probability} U=${p.utility}${p.chosen ? " ★" : ""}`;
+        case "word_chosen":     return `chose “${p.word}” (${p.mode||""})`;
+        case "emotion_snapshot":return `feeling ${p.dominant} (${p.value})`;
+        case "forecast_opened": return `bet “${p.phrase}” P=${p.probability}`;
+        case "forecast_resolved":
+            return `${p.status} “${p.phrase}”`
+                 + (p.evidence_cos != null ? ` cos=${p.evidence_cos}` : "");
+        case "gate_fired":      return `${p.action} @ ${p.site} (risk ${p.felt_risk})`;
+        case "reply_emitted":   return `“${p.reply}”`;
+        default:                return JSON.stringify(p).slice(0, 60);
+    }
+}
+function pushJournal(events) {
+    if (!events || !events.length) return;
+    const list = document.getElementById("timeline-list");
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 30;
+    for (const e of events) {
+        if (tlSeen.has(e.id)) continue;
+        tlSeen.add(e.id); tlRing.push(e); tlLastId = Math.max(tlLastId, e.id);
+        const meta = TL_META[e.kind] || { c: "#9aa5ce", label: e.kind };
+        if (e.kind === "reply_emitted") {
+            const sep = document.createElement("div");
+            sep.className = "tl-sep";
+            sep.textContent = `— turn ${e.turn}: replied —`;
+            sep.dataset.turn = e.turn;
+            list.appendChild(sep);
+        } else {
+            const row = document.createElement("div");
+            row.className = "tl-row"; row.dataset.turn = e.turn;
+            const tstr = new Date(e.ts * 1000).toLocaleTimeString().slice(0, 8);
+            row.innerHTML =
+                `<span class="tl-time">${tstr.slice(0,5)}</span>` +
+                `<span class="tl-badge" style="color:${meta.c}">${meta.label}</span>` +
+                `<span class="tl-body">${escapeHtml(tlBody(e))}</span>`;
+            list.appendChild(row);
+        }
+    }
+    // bound both the DOM and the ring
+    while (list.children.length > 400) list.removeChild(list.firstChild);
+    if (tlRing.length > 2000) tlRing = tlRing.slice(-2000);
+    document.getElementById("tl-count").textContent = `${tlRing.length} events`;
+    if (atBottom) list.scrollTop = list.scrollHeight;
+}
+function tlHighlightTurn(turn) {
+    document.querySelectorAll("#timeline-list .hot").forEach(
+        el => el.classList.remove("hot"));
+    document.querySelectorAll(`#timeline-list [data-turn="${turn}"]`).forEach(
+        el => el.classList.add("hot"));
 }
 
 /* --- bus sparkline ------------------------------------------------ */
@@ -570,6 +685,9 @@ function updateDashboard(s) {
     for (const msg of (s.autonomous || [])) {
         appendMsg("engine-messages", "engine (spontaneous)", msg, "bot engine autonomous");
     }
+
+    /* the thought-stream timeline — real journal events */
+    pushJournal(s.journal);
 }
 
 /* --- chat ----------------------------------------------------------- */
@@ -580,6 +698,33 @@ function appendMsg(containerId, who, text, klass = "") {
     div.innerHTML = `<div class="who">${who}</div><div>${escapeHtml(text)}</div>`;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
+    return div;
+}
+
+/* reply <- cause: attach WHAT SHAPED this reply, frozen at emission */
+function attachCauses(bubble, causes) {
+    if (!bubble || !causes) return;
+    bubble.dataset.turn = causes.turn;
+    const why = document.createElement("span");
+    why.className = "why-btn"; why.textContent = "why ▾";
+    bubble.querySelector(".who").appendChild(why);
+    const pop = document.createElement("div");
+    pop.className = "why-pop"; pop.style.display = "none";
+    const cf = causes.chosen_future;
+    pop.innerHTML =
+        `<div><span class="k">chosen future:</span> ` +
+        (cf ? `“${escapeHtml(cf.word||"")}” P=${cf.probability} B=${cf.benefit} R=${cf.risk}`
+            : "none dominated") + `</div>` +
+        `<div><span class="k">felt:</span> ${escapeHtml(causes.dominant_emotion||"—")} ` +
+        `(the Face view tinted the voice with this)</div>` +
+        (causes.intrusive ? `<div><span class="k">intrusion:</span> “${escapeHtml(causes.intrusive)}”</div>` : "") +
+        `<div><span class="k">gate:</span> ${escapeHtml((causes.gate||{}).action||"pass")} ` +
+        `(felt risk ${(causes.gate||{}).felt_risk ?? 0})</div>`;
+    bubble.appendChild(pop);
+    why.addEventListener("click", () => {
+        pop.style.display = pop.style.display === "none" ? "block" : "none";
+    });
+    bubble.addEventListener("mouseenter", () => tlHighlightTurn(causes.turn));
 }
 
 function escapeHtml(s) {
@@ -610,7 +755,8 @@ async function send() {
             return;
         }
         appendMsg("raw-messages", "raw", data.raw_response, "bot raw");
-        appendMsg("engine-messages", "engine", data.engine_response, "bot engine");
+        const bubble = appendMsg("engine-messages", "engine", data.engine_response, "bot engine");
+        attachCauses(bubble, data.engine_causes);
     } catch (e) {
         appendMsg("engine-messages", "error", String(e), "bot engine");
     } finally {
@@ -625,7 +771,20 @@ async function reset() {
     document.getElementById("raw-messages").innerHTML = "";
     document.getElementById("engine-messages").innerHTML = "";
     document.getElementById("turn-count").textContent = "0";
+    document.getElementById("timeline-list").innerHTML = "";
+    tlRing = []; tlSeen = new Set(); tlLastId = 0;
 }
+
+/* nav Timeline/Memory anchors expand + scroll to their panel */
+function applyHash() {
+    const h = location.hash;
+    document.body.classList.toggle("timeline-focus", h === "#timeline");
+    if (h === "#timeline" || h === "#memory") {
+        const el = document.getElementById(h.slice(1));
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+}
+window.addEventListener("hashchange", applyHash);
 
 /* --- realtime stream (SSE) with polling fallback -------------------- */
 let sse = null, pollTimer = null;
@@ -664,6 +823,7 @@ document.getElementById("user-input").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
 });
 document.getElementById("reset-btn").addEventListener("click", reset);
+applyHash();
 connectStream();
 </script>
 </body>

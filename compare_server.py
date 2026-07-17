@@ -111,6 +111,8 @@ def compare():
             "raw_response": raw_response,
             "engine_response": engine_response,
             "engine_state": engine.snapshot(),
+            # what shaped this reply, frozen at emission (reply <- cause)
+            "engine_causes": engine._last_causes,
             "turn": len(engine_history),
         })
     except Exception as e:
