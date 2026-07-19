@@ -149,7 +149,15 @@ Every motion is either **signal-bound** (drawn from the live engine state) or **
 
 *And the liveness contract:* every canvas motion is gated on a fresh stream. If the engine dies or disconnects, the face **freezes, greys out, and goes silent** within seconds — a dead engine visibly reads as dead. The ALIVE / ERROR / OFFLINE badge and the canvas always agree.
 
-**Voice**: click the mic once to open a **hands-free voice session** (like ChatGPT voice mode) — it listens, pauses while the AI thinks and speaks, then automatically listens again, until you click the mic off. The mic ring shows the state: red pulse = listening, amber = the AI has the floor. Replies are spoken with **pitch and rate modulated by the engine's actual emotional state** (fear speaks fast and high, sadness low and slow), captioned as they're spoken. Hold SPACE for one-shot push-to-talk, or press SPACE while it's speaking to barge in — it never listens to its own voice.
+**Voice**: click the mic once to open a **hands-free voice session** (like ChatGPT voice mode) — it listens, pauses while the AI thinks and speaks, then automatically listens again, until you click the mic off. The mic ring shows the state: red pulse = listening, amber = the AI has the floor. Replies are spoken with **pitch and rate modulated by the engine's actual emotional state** (its held positive states — calm, joy, curiosity — shape the voice), captioned as they're spoken. Hold SPACE for one-shot push-to-talk, or press SPACE while it's speaking to barge in — it never listens to its own voice.
+
+---
+
+## Add it to your own bot
+
+The engine is **model-agnostic** — it extracts everything from whatever LLM you point it at — so you can mount it on any open-weight, self-hosted chatbot (Qwen, Kimi, Llama, Mistral, GPT-OSS, …) in three steps: extract a per-model profile, `V2Engine.from_profile(...)`, and route your turns through `engine.converse(...)`. It needs forward-pass access to the model's residual stream, so it works with models you run yourself (not closed API-only endpoints), and adoption is a developer's choice on models whose license permits it.
+
+**See [docs/INTEGRATION.md](docs/INTEGRATION.md) for the full guide.**
 
 ---
 
