@@ -12,7 +12,7 @@ given).
 |---|---|---|
 | ADR-001 where the mind lives | this-era | docs/adr/ADR-001 |
 | ADR-002 epistemic types | this-era | docs/adr/ADR-002 |
-| Baseline harness (prediction/latency/retention metrics) | partial-built + deferred | smoke_test (23 checks), primordium suite (62), bench_tick, lived-rate + compute-capability asserts (test_v2m5); a unified cognition-metrics harness is deferred to the benchmark era |
+| Baseline harness (prediction/latency/retention metrics) | partial-built + deferred | smoke_test (24 checks), primordium suite (62), bench_tick, lived-rate + compute-capability asserts (test_v2m5); a unified cognition-metrics harness is deferred to the benchmark era |
 | Event journal + deterministic replay | partial-built + deferred | Pulse is an honest event feed and Tide/gates carry cause logs, but no replayable append-only journal; deferred — big surface, wants the CognitiveState era |
 | Typed bus shim (source/type/confidence on writes) | this-era | bus provenance ledger (bus.py), all write surfaces |
 
@@ -72,3 +72,17 @@ honesty instruments (bus provenance, forecast ledger) got dashboard
 panels. Deliberate non-goal, still on the record: Limbic keeps its
 name (anatomy metaphor, no claimed-absent mechanism, crosses the
 substrate boundary).
+
+Era 10 (the Unauthoring) removed authored PERSONALITY, not just cosplay
+naming: the engine's system persona ("You are Vitalis…") and the
+Primordium caregiver persona are gone (behavior is emergent from
+steering, extracted from the LLM, never hand-written); the hand-authored
+emotion-dynamics tables + good/bad word lexicons + keyword fallback are
+deleted (temperament is Mirror-fitted from the model or neutral, never
+authored); the engine now HOLDS only positive emotions (negative vectors
+are still extracted for PERCEPTION but never enter the held/steered
+state), and alignment was rebuilt from "detect danger and withhold" to
+"steer toward good" — misalignment (divergence from the good baseline +
+low imagined-goodness) triggers a re-steer, never a withheld reply.
+Deferred, on the record: the lean transformer-extension rewrite, and a
+fully discovered-affect basis (no hardcoded emotion NAMES at all).

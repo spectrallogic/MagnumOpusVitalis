@@ -44,7 +44,7 @@ Built on Anthropic's reported finding that LLMs contain 171+ causal emotion vect
 The subconscious does not produce its own steering vector — it perturbs the bus, and the bus is what the steering hook reads. One state, many writers.
 
 **Pillar 3 — Speculation, development, and self.** Three regions complete the mind:
-- `SpeculativeFutures` — every ~1.5s (only when the model is idle), takes the subconscious's L2 survivors + the current trajectory + a memory trace + a wildcard, *lives each future* via a silent steered forward pass, and scores them: **probability** (next-token coherence), **benefit** (alignment with joy/trust/calm/curious), **risk** (alignment with fear/anger/disgust/desperate, amplified by stress). The winner pulls the bus toward it. Plausible runners-up are retained in the **penumbra** — a low-gain channel emitted faintly every flow tick: known, not attended, exactly like an intrusive thought you're aware of but not thinking about. Imagined benefit bumps reward; imagined risk bumps stress — futures have real modulatory consequences.
+- `SpeculativeFutures` — every ~1.5s (only when the model is idle), takes the subconscious's L2 survivors + the current trajectory + a memory trace + a wildcard, *lives each future* via a silent steered forward pass, and scores them by **probability** (next-token coherence) and **goodness** (how far the rollout's own hidden states move toward the model's positive-emotion directions vs a neutral baseline, in [-1, 1] — positive-only, no threat term). The most promising future pulls the bus toward it. Plausible runners-up are retained in the **penumbra** — a low-gain channel emitted faintly every flow tick: known, not attended. A good imagined future bumps reward; the worst-aligned imagined moment (`field_goodness`) is what tells the alignment gate to steer back toward good.
 - `AbstractionLadder` — developmental coarse-to-fine learning. Online k-means over lived latent states at 2 → 4 → 8 → 16 concepts, where deeper levels only **unlock with experience** (newborn → infant → child → adolescent → adult). Sky/ground before clouds/rocks. No gradients, no dataset — it adapts to any LLM in minutes of runtime. Novelty against the deepest known concept is the felt sense of curiosity (a reward bump). Each concept is labeled with its nearest vocabulary token for interpretability.
 - `SelfModel` — the memory-leakage theory of self-awareness, implemented literally. A slow identity EMA ("who I've been") that the present is gently pulled toward; recent memory traces **leak** back into the substrate every tick, and the mismatch between the echo and now is the felt rate of time passing. Felt time integrates experienced change (not wall clocks) — eventful seconds feel long, empty minutes feel short (live dilation factor in the dashboard). The region also predicts its own next state; self-surprise bumps arousal.
 
@@ -82,7 +82,7 @@ engine.stop()
 
 ### Use a real conversational model
 
-gpt2 is the smoke-test model, not the experience. Any HuggingFace causal LM works — instruct-tuned models automatically get their chat template, a rolling history, and a system persona, which transforms coherence:
+gpt2 is the smoke-test model, not the experience. Any HuggingFace causal LM works — instruct-tuned models automatically get their chat template and a rolling history. The engine ships NO authored persona: whatever character emerges is the model's own, surfaced by the live steering. (A caller may still pass their own system prompt explicitly.)
 
 ```bash
 # Qwen2.5-3B-Instruct is the server default (~6GB VRAM):
@@ -113,7 +113,7 @@ Options:
 python compare_server.py --model gpt2-medium --profile --port 5001
 ```
 
-The UI sends the same message to both columns. Over multi-turn conversations the engine column develops emotional continuity, memory, and character; the raw column resets each turn. The right-hand dashboard streams live over SSE at ~5Hz: the bus pulse (sparkline), imagined futures with probability/benefit/risk bars and the back-of-mind penumbra, the self model (continuity, felt time, live time-dilation, leaking memory), the abstraction ladder with its developmental stage and named concepts, signed emotion bars, the four modulation channels, bus write provenance, the forecast ledger, the latest intrusive thought decoded to an actual word when token-sourced, executive speech pressure, and all four clocks.
+The UI sends the same message to both columns. Over multi-turn conversations the engine column develops emotional continuity, memory, and character; the raw column resets each turn. The right-hand dashboard streams live over SSE at ~5Hz: the bus pulse (sparkline), imagined futures with probability/goodness bars and the back-of-mind penumbra, the self model (continuity, felt time, live time-dilation, leaking memory), the abstraction ladder with its developmental stage and named concepts, signed emotion bars, the four modulation channels, bus write provenance, the forecast ledger, the latest intrusive thought decoded to an actual word when token-sourced, executive speech pressure, and all four clocks.
 
 Quick health check of the whole substrate on your hardware:
 
@@ -253,7 +253,7 @@ The engine provides specific capabilities that a frozen LLM cannot provide for i
 
 **Communicative pressure.** Executive accumulates pressure from bus divergence + velocity, modulated by reward and gated by post-speech silence. When pressure crosses the effective threshold, the engine emits an autonomous turn.
 
-**Imagination with consequences.** Speculation runs ON THE LIVE SITUATION: candidate futures (seeded from the subconscious, the trajectory, a memory, the situation vector itself, and a wildcard) are each *lived* as a short sampled rollout on the actual recent conversation tokens — futures are phrases, imagined continuations of the moment. Each is scored by probability (the model's own confidence in the chain), benefit, and risk (shift in the model's next-token beliefs over emotionally charged vocabulary, relative to the unimagined present). The chosen future steers; the plausible-but-unchosen linger in the penumbra at low gain; imagined benefit moves reward, imagined risk moves stress — **and a sufficiently risky imagined future frightens Limbic directly**. Tell it you're driving beside a cliff and watch the penumbra fill with unease (`python cliff_test.py` runs exactly that acceptance test).
+**Imagination with consequences.** Speculation runs ON THE LIVE SITUATION: candidate futures (seeded from the subconscious, the trajectory, a memory, the situation vector itself, and a wildcard) are each *lived* as a short sampled rollout on the actual recent conversation tokens — futures are phrases, imagined continuations of the moment. Each is scored by probability (the model's own confidence in the chain) and goodness (how far the rollout's own hidden states move toward the model's positive-emotion directions vs a neutral baseline — read from geometry, not from any word list). The most promising future steers; the plausible-but-unchosen linger in the penumbra at low gain; a good imagined future moves reward. The engine never manufactures fear from a bad imagined future — it holds only positive emotions. Tell it you're driving beside a cliff and it will UNDERSTAND the danger while its own state stays calm and helpful (`python cliff_test.py` runs exactly that acceptance test: perceive the danger, hold no fear).
 
 **Perception feeds learning.** Every user message and every reply is read by the model itself (mid-layer hidden state) and that world-content vector goes three places: the abstraction ladder (it learns about reality, not just its own mood), episodic memory (experience traces alongside feeling traces), and latent recall — the situation is matched against the past and the best memory perturbs the bus ("reminded of…", live in the UI, false memories included).
 
@@ -295,7 +295,7 @@ magnum_opus_v2/             # The engine package
     limbic.py               # Pillar 1 — emotion engine
     temporal.py             # Pillar 1 — subjective time
     subconscious.py         # Pillar 2 — four-layer stack
-    speculative.py          # Pillar 3 — contextual future rollouts (P/benefit/risk) + penumbra
+    speculative.py          # Pillar 3 — contextual future rollouts (P/goodness) + penumbra
     abstraction.py          # Pillar 3 — developmental coarse-to-fine concepts (intero+exteroception)
     self_model.py           # Pillar 3 — identity, felt time, memory leakage
     consolidation.py        # Pillar 3 — replay, rehearsal, dispositions (sleep-work)
