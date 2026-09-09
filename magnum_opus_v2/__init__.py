@@ -26,6 +26,7 @@ from magnum_opus_v2.region import Region, NoOpRegion, PerturbationRegion
 from magnum_opus_v2.steering_hook import SteeringHook, BusSteeringDriver
 from magnum_opus_v2.neuromod import NeuromodState, NeuromodulatorRegion
 from magnum_opus_v2.engine import V2Engine
+from magnum_opus_v2.cognitive_state import CognitiveState, StateEntry
 from magnum_opus_v2.regions import (
     Limbic, Temporal, SubconsciousStack, Candidate, CandidateSampler,
     NoiseSampler, TokenEmbeddingSampler, MemorySampler,
@@ -47,6 +48,7 @@ from magnum_opus_v2.prompts import EMOTION_PROMPT_PAIRS, TEMPORAL_PROMPT_PAIRS
 __all__ = [
     # Engine
     "V2Engine",
+    "CognitiveState", "StateEntry",
     "V2Config", "BusConfig", "ClockConfig",
     # Substrate
     "LatentBus", "FlowRunner",

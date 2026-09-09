@@ -35,6 +35,7 @@ import torch
 
 from magnum_opus_v2.regions.subconscious import Candidate
 from magnum_opus_v2.model_sources import model_storage_key
+from magnum_opus_v2.cognitive_state import CognitiveState
 
 ENGINE_VERSION = 2
 STATE_DIR = Path(__file__).parent.parent / "state"
@@ -238,6 +239,7 @@ def save_engine(engine, path: Optional[Path] = None) -> Optional[Path]:
         "executive": {"pressure": float(engine.executive.pressure)},
         "alignment_gate": engine.alignment_gate.state_dict(),
         "rumination_steps": int(engine.rumination_steps),
+        "cognitive_state": engine.cognitive_state.state_dict(),
     }
     with engine._history_lock:  # noqa: SLF001
         data["chat_history"] = [dict(m) for m in engine.chat_history]
@@ -321,6 +323,10 @@ def load_engine(engine, path: Optional[Path] = None) -> bool:
             f"engine checkpoint was saved for '{saved_model}', not "
             f"'{model_name}'. Steering vectors are per-model; start fresh.")
 
+    # Validate the portable block before any runtime state is mutated. Older
+    # version-2 checkpoints contain no portable records and start that store empty.
+    cognitive_state = (CognitiveState.from_state_dict(data["cognitive_state"])
+                       if "cognitive_state" in data else CognitiveState())
     apply_bus(engine.bus, data.get("bus", {}))
     apply_neuromod(engine.neuromod, data.get("neuromod", {}))
     apply_limbic(engine.limbic, data.get("limbic", {}))
@@ -331,6 +337,7 @@ def load_engine(engine, path: Optional[Path] = None) -> bool:
     engine.executive.pressure = float(
         data.get("executive", {}).get("pressure", 0.0))
     engine.alignment_gate.load_state_dict(data.get("alignment_gate"))
+    engine.cognitive_state = cognitive_state
     with engine._history_lock:  # noqa: SLF001
         engine.chat_history = [dict(m) for m in data.get("chat_history", [])]
     if engine.speculative is not None and data.get("forecast"):

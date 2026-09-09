@@ -134,6 +134,16 @@ be transferred between models merely because their dimensions match.
 
 See [integration instructions](docs/INTEGRATION.md). The engine can retain state across turns and supports explicit save/resume through its persistence module.
 
+The runtime also exposes a model-independent cognitive ledger for explicit,
+source-attributed facts and goals. Use `engine.commit_fact(...)` and
+`engine.commit_goal(...)`; use `converse(..., required_fact=...)` only for a
+validated exact recall contract. Latent affect and steering vectors remain
+model-specific. To study where an intervention has causal influence, run the
+residual-relative layer diagnostic in
+[`experiments/latent_layer_sweep.py`](experiments/latent_layer_sweep.py) before
+choosing a hook placement for a held-out behavioral pilot. See the
+[engine/runtime boundary](docs/ENGINE_ARCHITECTURE.md).
+
 ### Activation-boundary migration
 
 New profiles use `activation_site="block_output"` and version 2. Extraction, baseline measurement, perception, and intervention now use the same zero-based block output, including at the final block. Earlier extraction used a different boundary through Hugging Face's `hidden_states` indexing. New steering defaults to the profiled block alone; neighboring blocks require separately justified calibration.

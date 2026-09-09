@@ -40,6 +40,7 @@ from magnum_opus_v2.regions import (
 )
 from magnum_opus_v2.regions.alignment_gate import AlignmentGate
 from magnum_opus_v2.journal import CognitionJournal
+from magnum_opus_v2.cognitive_state import CognitiveState, render_packet
 
 
 # No authored persona. The engine gives the frozen LLM a continuous felt
@@ -133,6 +134,9 @@ class V2Engine:
     _last_percept: Optional[Any] = None
     # What the situation reminded it of, for the dashboard.
     _last_recall: Optional[dict] = None
+    # Portable explicit claims/goals; separate from model-specific latent state.
+    cognitive_state: CognitiveState = field(default_factory=CognitiveState)
+    _last_grounding: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Construction
@@ -157,6 +161,7 @@ class V2Engine:
         system_prompt: Optional[str] = DEFAULT_SYSTEM_PROMPT,
         # Speech callback
         on_should_speak=None,
+        cognitive_state: Optional[CognitiveState] = None,
     ) -> "V2Engine":
         profile.validate_activation_site()
         cfg = config or V2Config(hidden_dim=profile.hidden_dim, device=device)
@@ -362,6 +367,7 @@ class V2Engine:
             model=model, tokenizer=tokenizer, device=device,
             model_lock=model_lock,
             profile=profile, system_prompt=system_prompt,
+            cognitive_state=cognitive_state if cognitive_state is not None else CognitiveState(),
             consolidation=consolidation, situation=situation,
         )
 
@@ -620,6 +626,29 @@ class V2Engine:
             "false": bool((best.meta or {}).get("false", False)),
         }
 
+    def _set_context_tail(self, text: str) -> None:
+        # Slice after tokenization: right truncation would retain the beginning.
+        ids = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)["input_ids"]
+        self._context_ids = ids[0, -64:].detach()
+
+    def _runtime_instruction(self, prompt="", required_fact=None):
+        return render_packet(self.cognitive_state.packet(prompt, required_fact=required_fact),
+                             required_fact=required_fact)
+
+    def commit_fact(self, key, value, *, source="application", evidence="application commit",
+                    expected_revision=None):
+        """Commit an explicit, portable claim owned by the runtime."""
+        return self.cognitive_state.commit(
+            key, value, source=source, evidence=evidence,
+            kind="fact", expected_revision=expected_revision)
+
+    def commit_goal(self, key, value, *, source="application", evidence="application commit",
+                    expected_revision=None):
+        """Commit an explicit runtime goal; the language model cannot write it."""
+        return self.cognitive_state.commit(
+            key, value, source=source, evidence=evidence,
+            kind="goal", expected_revision=expected_revision)
+
     def user_message(self, text: str) -> None:
         """User just sent something. Perceive its emotional content in
         latent space (projection onto the extracted emotion vectors — no
@@ -627,6 +656,10 @@ class V2Engine:
         abstraction ladder), get reminded of similar past moments, mark
         Temporal + Executive interaction, push the live emotion blend into
         the subconscious so its filtering is informed."""
+        # Publish this turn's textual problem before perception/deliberation.
+        self._set_context_tail(text)
+        if self.situation is not None:
+            self.situation.invalidate_narrative()
         try:
             stim = self.perceive_emotions(text)
         except Exception:  # noqa: BLE001 — perception must never block a turn
@@ -675,11 +708,16 @@ class V2Engine:
         self, prompt: str, max_new_tokens: int = 60,
         do_sample: bool = True, top_p: float = 0.92, temperature: float = 0.9,
         seed: Optional[int] = None,
+        required_fact: Optional[str] = None,
     ) -> str:
         """One conversational turn with live bus steering. Returns the
         REPLY ONLY (not the prompt). Instruct-tuned models get their chat
         template plus a rolling history; base LMs get raw continuation."""
+        if required_fact is not None:
+            self.cognitive_state.fact(required_fact)  # fail before mutating a turn
+        self._last_grounding = None
         self.user_message(prompt)
+        runtime_instruction = self._runtime_instruction(prompt, required_fact)
         if seed is not None:
             torch.manual_seed(seed)
 
@@ -698,9 +736,10 @@ class V2Engine:
         with self.model_lock:
             if self._uses_chat_template():
                 messages: List[Dict[str, str]] = []
-                if self.system_prompt:
+                system = "\n\n".join(x for x in (self.system_prompt, runtime_instruction) if x)
+                if system:
                     messages.append(
-                        {"role": "system", "content": self.system_prompt})
+                        {"role": "system", "content": system})
                 with self._history_lock:
                     messages.extend(list(self.chat_history))
                 messages.append({"role": "user", "content": prompt})
@@ -710,7 +749,8 @@ class V2Engine:
                 ).to(self.device)
             else:
                 input_ids = self.tokenizer(
-                    prompt, return_tensors="pt",
+                    (runtime_instruction + "\n\n" + prompt) if runtime_instruction else prompt,
+                    return_tensors="pt",
                 ).to(self.device)["input_ids"]
 
             # Second thought: on high felt risk, steady the stance and
@@ -744,15 +784,24 @@ class V2Engine:
             finally:
                 self.hook.set_provider(None)
 
+        if required_fact is not None:
+            # Only this explicitly requested, exact recall contract is verified.
+            # Ordinary conversation is not claimed to be fact-checked.
+            fact = self.cognitive_state.fact(required_fact)
+            draft = reply
+            reply = fact.value
+            self._last_grounding = {"key": fact.key, "revision": fact.revision,
+                                    "source": fact.source, "draft": draft,
+                                    "repaired": draft != reply}
+            self.journal.emit("grounded_recall", turn=self._turn(),
+                              key=fact.key, revision=fact.revision, repaired=draft != reply)
+
         # The stage on which imagination runs until the next turn: the
         # PLAIN TEXT of the exchange, not the chat-template scaffolding —
         # rollouts should continue the situation, not the turn format.
         try:
             ctx_text = f"{prompt}\n{reply}"
-            self._context_ids = self.tokenizer(
-                ctx_text, return_tensors="pt", truncation=True, max_length=64,
-                add_special_tokens=False,
-            )["input_ids"][0].detach()
+            self._set_context_tail(ctx_text)
         except Exception:  # noqa: BLE001
             pass
 
@@ -994,9 +1043,10 @@ class V2Engine:
             try:
                 if self._uses_chat_template():
                     messages: List[Dict[str, str]] = []
-                    if self.system_prompt:
+                    system = "\n\n".join(x for x in (self.system_prompt, self._runtime_instruction()) if x)
+                    if system:
                         messages.append(
-                            {"role": "system", "content": self.system_prompt})
+                            {"role": "system", "content": system})
                     with self._history_lock:
                         messages.extend(list(self.chat_history))
                     ids = self.tokenizer.apply_chat_template(
@@ -1077,6 +1127,8 @@ class V2Engine:
             subc_snap["intrusive_word"] = meta.get("phrase") if isinstance(meta, dict) else None
 
         return {
+            "cognitive_state": self.cognitive_state.snapshot(),
+            "grounding": self._last_grounding,
             "bus":          self.bus.snapshot(),
             "bus_provenance": self.bus.provenance(),
             "neuromod":     self.neuromod.snapshot(),

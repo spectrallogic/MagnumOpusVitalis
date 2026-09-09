@@ -41,6 +41,11 @@ class SituationModel(Region):
     name = "situation"
     clock = "perception"
 
+    def invalidate_narrative(self):
+        """A new turn has arrived; retain latent continuity, discard stale prose."""
+        with self._lock:
+            self.narrative = None
+
     def __init__(
         self,
         device: str = "cpu",
