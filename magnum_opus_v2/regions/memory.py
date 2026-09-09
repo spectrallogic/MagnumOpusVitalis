@@ -104,6 +104,7 @@ class Memory(Region):
                     "importance": round(float(meta.get("importance", 0.0)), 3),
                     "false": bool(c.confidence < 1.0),
                     "confidence": round(float(c.confidence), 3),
+                    "epistemic": meta.get("epistemic", "confabulated" if c.confidence < 1.0 else "observed"),
                 })
             return out
 

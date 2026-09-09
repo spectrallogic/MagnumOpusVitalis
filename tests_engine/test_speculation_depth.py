@@ -25,11 +25,16 @@ def test_speculative_config_defaults_are_deepened():
 
 
 @pytest.fixture(scope="module")
-def gpt2_engine():
+def gpt2_engine(tmp_path_factory):
     try:
         model, tok, dev = load_model("gpt2")
         prof = (load_profile("gpt2") if profile_exists("gpt2")
-                else create_profile("gpt2", device=dev))
+                else None)
+        if prof is None or prof.metadata.activation_site != "block_output":
+            # Re-extract in a temporary directory; never overwrite a saved
+            # research profile as a side effect of running tests.
+            prof = create_profile("gpt2", device=dev,
+                                  profiles_dir=tmp_path_factory.mktemp("profiles"))
     except Exception as e:  # noqa: BLE001 — offline / no weights
         pytest.skip(f"gpt2 unavailable: {e}")
     eng = V2Engine.from_profile(model, tok, prof, device=dev)

@@ -116,9 +116,8 @@ def _embed_tail(model, tokenizer, text: str, target_layer: int,
     same layer and convention as extraction.py / engine perception."""
     ids = tokenizer(text)["input_ids"][-max_tokens:]
     t = torch.tensor([ids], device=device)
-    with torch.no_grad():
-        out = model(t, output_hidden_states=True)
-    return out.hidden_states[target_layer].mean(dim=1).squeeze(0).float()
+    from magnum_opus_v2.extraction import read_block_output
+    return read_block_output(model, {"input_ids": t}, target_layer)
 
 
 def extract_dynamics(

@@ -222,6 +222,8 @@ class SubconsciousStack(Region):
         l3_interpolate_top_2: bool = True,
         # Optional emotion vector dict for biasing L0 + L2
         emotion_vectors: Optional[Dict[str, torch.Tensor]] = None,
+        future_ttl_seconds: float = 3.0,
+        future_gain: float = 0.5,
     ):
         self.hidden_dim = hidden_dim
         self.device = device
@@ -234,6 +236,9 @@ class SubconsciousStack(Region):
         self.l2_surprise_probability = float(l2_surprise_probability)
         self.l3_perturbation_strength = float(l3_perturbation_strength)
         self.l3_interpolate_top_2 = bool(l3_interpolate_top_2)
+        self.future_ttl_seconds = float(future_ttl_seconds)
+        self.future_gain = float(future_gain)
+        self._evaluated_futures: list = []
 
         # Store emotion vectors so L0 can bias by current emotion and L2
         # can compare to "what does this mean for me right now."
@@ -310,6 +315,24 @@ class SubconsciousStack(Region):
                 for c, s in self.last_l2_candidates
             ]
 
+    def publish_futures(self, futures: list) -> None:
+        """Expensive search publishes hypotheses for cheap upper-layer replay.
+
+        This replaces the bounded buffer; no memory or observation is created.
+        Flow ticks consume it without making model calls.
+        """
+        now = time.monotonic()
+        with self._lock:
+            self._evaluated_futures = [
+                (Candidate(vec=f["vec"].detach().to(self.device).clone(),
+                           source="imagined_future", confidence=0.0,
+                           meta={"epistemic": "imagined", "epistemic_type": "hypothesis", "node_id": f["id"],
+                                 "depth": f["depth"], "phrase": f["name"],
+                                 "utility": float(f["utility"])}),
+                 float(f["utility"]), now)
+                for f in futures[:self.l2_keep_top_k]
+            ]
+
     def snapshot(self) -> dict:
         with self._lock:
             intr = self.last_intrusive
@@ -322,6 +345,7 @@ class SubconsciousStack(Region):
                 "intrusive_confidence": intr.confidence if intr is not None else 0.0,
                 "intrusive_meta": intr.meta if intr is not None else None,
                 "stream": list(self.intrusive_history)[-30:],
+                "evaluated_futures": len(self._evaluated_futures),
             }
 
     # ------------------------------------------------------------------
@@ -348,7 +372,20 @@ class SubconsciousStack(Region):
             self.last_was_surprise = was_surprise
             self.last_l2_candidates = list(l2)
 
-            chosen = self._layer_3_emergent(l2)
+            # The fast sea supplies proposals; evaluated future paths join
+            # only at the upper layer, retaining their hypothesis provenance.
+            now = time.monotonic()
+            self._evaluated_futures = [
+                item for item in self._evaluated_futures
+                if now - item[2] < self.future_ttl_seconds]
+            upper = list(l2)
+            for cand, utility, born in self._evaluated_futures:
+                freshness = 1.0 - (now - born) / self.future_ttl_seconds
+                score = self.future_gain * max(0.0, utility) * freshness
+                if score > 0:
+                    upper.append((cand, score))
+            upper.sort(key=lambda item: -item[1])
+            chosen = self._layer_3_emergent(upper)
             self.last_intrusive = chosen
             if chosen is None:
                 return None
@@ -504,6 +541,7 @@ class SubconsciousStack(Region):
                 vec=blended,
                 source=l2[0][0].source + "+" + l2[1][0].source,
                 confidence=min(l2[0][0].confidence, l2[1][0].confidence),
-                meta={"interpolated": True},
+                meta={"interpolated": True, "epistemic": "imagined", "epistemic_type": "hypothesis",
+                      "parents": [dict(l2[0][0].meta or {}), dict(l2[1][0].meta or {})]},
             )
         return top[0]

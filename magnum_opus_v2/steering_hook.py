@@ -24,6 +24,7 @@ silent pass. Generation leaves it off, so long conversations don't
 accumulate a tensor per generated token.
 """
 
+from contextlib import contextmanager
 from typing import Callable, List, Optional
 
 import torch
@@ -133,24 +134,52 @@ class SteeringHook:
     def clear(self) -> None:
         self.captured_states = []
 
+    @contextmanager
+    def isolated(self, vector=None, capture=False):
+        """Temporary model pass with no feedback writes. Caller holds model_lock.
+
+        Restore the complete hook state even if the model raises. Imagination
+        and measurement must not leak into the bus through the speech tap.
+        """
+        saved = (self.steering_vector, self.provider, self.active,
+                 self.capture_enabled, self.captured_states,
+                 self.feedback_enabled, self._fb_count)
+        self.set_steering(vector)
+        self.capture_enabled = capture
+        self.captured_states = []
+        self.feedback_enabled = False
+        try:
+            yield self
+        finally:
+            (self.steering_vector, self.provider, self.active,
+             self.capture_enabled, self.captured_states,
+             self.feedback_enabled, self._fb_count) = saved
+
     @staticmethod
     def _layer_list(model):
         if hasattr(model, "transformer") and hasattr(model.transformer, "h"):
             return model.transformer.h
         elif hasattr(model, "model") and hasattr(model.model, "layers"):
             return model.model.layers
+        elif hasattr(model, "gpt_neox") and hasattr(model.gpt_neox, "layers"):
+            return model.gpt_neox.layers
+        elif (hasattr(model, "model") and hasattr(model.model, "decoder")
+              and hasattr(model.model.decoder, "layers")):
+            return model.model.decoder.layers
         raise ValueError(
             f"Unknown model architecture. Model type: {type(model).__name__}"
         )
 
     def attach(
         self, model, target_layer: int,
-        layer_span: int = 1, span_scale: float = 0.4,
+        layer_span: int = 0, span_scale: float = 0.4,
     ) -> "SteeringHook":
         """Attach to target_layer (full strength) and ±layer_span neighbors
         (span_scale strength). span=0 restores single-layer behavior."""
         layers = self._layer_list(model)
         n = len(layers)
+        if not 0 <= target_layer < n:
+            raise ValueError(f"target_layer must be a block index in [0, {n})")
         self._handles.append(
             layers[target_layer].register_forward_hook(
                 self._make_hook_fn(1.0, primary=True))

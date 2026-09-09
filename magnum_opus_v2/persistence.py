@@ -34,8 +34,9 @@ from typing import Optional
 import torch
 
 from magnum_opus_v2.regions.subconscious import Candidate
+from magnum_opus_v2.model_sources import model_storage_key
 
-ENGINE_VERSION = 1
+ENGINE_VERSION = 2
 STATE_DIR = Path(__file__).parent.parent / "state"
 
 # cap for rebased cooldown/freshness ages: an ancient nap should wake
@@ -44,7 +45,7 @@ _AGE_CAP_S = 3600.0
 
 
 def _sanitize(model_name: str) -> str:
-    return model_name.replace("/", "--").replace("\\", "--")
+    return model_storage_key(model_name)
 
 
 def default_path(model_name: str) -> Path:
@@ -225,6 +226,7 @@ def save_engine(engine, path: Optional[Path] = None) -> Optional[Path]:
         "engine_version": ENGINE_VERSION,
         "saved_at": time.time(),
         "model_name": model_name,
+        "profile_signature": engine.profile.signature() if engine.profile else None,
         "hidden_dim": int(engine.bus.hidden_dim),
         "bus": encode_bus(engine.bus),
         "neuromod": encode_neuromod(engine.neuromod),
@@ -298,6 +300,15 @@ def load_engine(engine, path: Optional[Path] = None) -> bool:
     if not path.exists():
         return False
     data = torch.load(path, map_location="cpu", weights_only=False)
+    if data.get("engine_version") != ENGINE_VERSION:
+        raise RuntimeError(
+            "Checkpoint predates the block-output activation convention or uses "
+            "an unsupported version. Keep it as an archive and start fresh state.")
+
+    if engine.profile and data.get("profile_signature") != engine.profile.signature():
+        raise RuntimeError(
+            "Checkpoint calibration differs from the selected profile, or predates "
+            "calibration identity checks. Keep it as an archive and start fresh state.")
 
     if int(data.get("hidden_dim", -1)) != int(engine.bus.hidden_dim):
         raise RuntimeError(

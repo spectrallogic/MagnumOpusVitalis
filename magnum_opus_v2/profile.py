@@ -20,6 +20,7 @@ Programmatic:
 """
 
 import argparse
+import hashlib
 import json
 import shutil
 from dataclasses import asdict, dataclass
@@ -31,6 +32,7 @@ import torch
 
 from magnum_opus_v2.extraction import extract_hidden_states, extract_vectors
 from magnum_opus_v2.loader import load_model
+from magnum_opus_v2.model_sources import canonical_model_source, model_storage_key
 
 PROFILES_DIR = Path(__file__).parent.parent / "profiles"
 
@@ -54,11 +56,16 @@ class ProfileMetadata:
     n_layers: int
     vector_names: List[str]
     created_at: str
-    version: str = "1.0"
+    version: str = "2.0"
+    activation_site: str = "block_output"
+    model_fingerprint: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "ProfileMetadata":
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+        fields = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        fields.setdefault("version", "1.0")
+        fields.setdefault("activation_site", "legacy_hidden_states_index")
+        return cls(**fields)
 
 
 @dataclass
@@ -102,9 +109,28 @@ class ModelProfile:
                 f"dim={self.metadata.hidden_dim}, "
                 f"vectors={len(self.vectors)})")
 
+    def validate_activation_site(self) -> None:
+        if self.metadata.activation_site != "block_output":
+            raise ValueError(
+                "Legacy profile uses a different activation boundary. Re-extract "
+                f"with: python -m magnum_opus_v2.profile create {self.model_name}. "
+                "Start fresh runtime state; old latent memories use the old boundary."
+            )
+
+    def signature(self) -> str:
+        """Bind runtime checkpoints to this calibration, including actual vectors."""
+        digest = hashlib.sha256(json.dumps(
+            {"metadata": asdict(self.metadata), "baseline": asdict(self.baseline),
+             "dynamics": self.dynamics}, sort_keys=True,
+        ).encode("utf-8"))
+        for name, vector in sorted(self.vectors.items()):
+            digest.update(name.encode("utf-8"))
+            digest.update(vector.detach().cpu().float().contiguous().numpy().tobytes())
+        return digest.hexdigest()
+
 
 def _sanitize_model_name(model_name: str) -> str:
-    return model_name.replace("/", "--").replace("\\", "--")
+    return model_storage_key(canonical_model_source(model_name))
 
 
 def _profile_dir(model_name: str, profiles_dir: Path = PROFILES_DIR) -> Path:
@@ -145,23 +171,23 @@ def create_profile(
     profiles_dir: Path = PROFILES_DIR,
     device: Optional[str] = None,
     verbose: bool = True,
+    *,
+    loaded_model=None,
+    model_fingerprint: Optional[str] = None,
 ) -> ModelProfile:
-    """Extract direction vectors and baseline for a model, save as a reusable profile."""
+    """Calibrate once; pass (model, tokenizer, device) to avoid a second model load."""
+    model_name = canonical_model_source(model_name)
     if verbose:
         print(f"\n{'=' * 50}")
         print(f"  Creating profile for: {model_name}")
         print(f"{'=' * 50}")
 
-    model, tokenizer, device = load_model(model_name, device)
+    model, tokenizer, device = (loaded_model if loaded_model is not None
+                                else load_model(model_name, device))
 
-    if hasattr(model.config, "n_layer"):
-        n_layers = model.config.n_layer
-        hidden_dim = model.config.n_embd
-    elif hasattr(model.config, "num_hidden_layers"):
-        n_layers = model.config.num_hidden_layers
-        hidden_dim = model.config.hidden_size
-    else:
-        raise ValueError(f"Cannot detect architecture for {model_name}")
+    from magnum_opus_v2.steering_hook import SteeringHook
+    n_layers = len(SteeringHook._layer_list(model))
+    hidden_dim = model.get_input_embeddings().weight.shape[1]
 
     target_layer = n_layers // 2
 
@@ -194,6 +220,7 @@ def create_profile(
         n_layers=n_layers,
         vector_names=list(vectors.keys()),
         created_at=datetime.now().isoformat(),
+        model_fingerprint=model_fingerprint,
     )
 
     profile = ModelProfile(metadata, vectors, baseline, dynamics=dynamics)
@@ -222,6 +249,9 @@ def save_profile(profile: ModelProfile, profiles_dir: Path = PROFILES_DIR) -> Pa
     if profile.dynamics:
         with open(profile_dir / "dynamics.json", "w") as f:
             json.dump(profile.dynamics, f, indent=2)
+    else:
+        # Saving a full replacement must not retain another extraction's fit.
+        (profile_dir / "dynamics.json").unlink(missing_ok=True)
 
     return profile_dir
 
@@ -233,8 +263,8 @@ def load_profile(
     """Load a saved profile by model name or directory path."""
     path = Path(path_or_model_name)
 
-    if not path.is_dir():
-        path = _profile_dir(str(path_or_model_name), profiles_dir)
+    if not (path / "metadata.json").is_file():
+        path = _profile_dir(canonical_model_source(str(path_or_model_name)), profiles_dir)
 
     if not path.is_dir():
         raise FileNotFoundError(

@@ -12,3 +12,4 @@ vox_check.js
 
 # engine naps (per-model runtime state)
 /state/
+/results/

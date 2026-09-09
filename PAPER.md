@@ -3,6 +3,8 @@
 
 > **STATUS: SPECULATIVE DESIGN ESSAY.** This document is theory and ambition — the framework that motivated the build, in the author's voice. It is not a claims sheet: mechanisms are claimed only where measured, in the READMEs (see the Reality Contract in [primordium/README.md](primordium/README.md) and the wired-effects lists in [README.md](README.md)). Where this essay says "consciousness", "feels", or "AGI", read: hypothesis, functional analog, ambition.
 >
+> The current implementation, corrected research framing, and falsifiable experiments are in [docs/RESEARCH.md](docs/RESEARCH.md). Statements below about life, brains, chemistry, and consciousness are motivating analogies or hypotheses, not established identities.
+>
 > For quickstart, installation, and usage, see the [README](README.md).
 
 ---
@@ -13,7 +15,7 @@ My name is Alan Hourmand. I've spent years thinking about how to build AI system
 
 On April 2, 2026, Anthropic's interpretability team published findings consistent with exactly that (as I read them — this essay treats those reported results as its working premise). They cracked open Claude Sonnet 4.5's neural network and found 171 internal "emotion vectors": patterns of neural activation that correspond to specific emotional concepts and *causally drive* the model's behavior. Not in the output text. Inside the processing itself. Before a single word is written.
 
-I had the theory right. What I had wrong was the architecture. I was designing parallel emotional processing streams that would run alongside the language model and feed into it. That's overengineered. The emotions are already *in* the latent space. You don't need to build a second system and figure out how to integrate it. You need to reach into what's already there and steer it.
+The findings supported part of my hypothesis. They did not settle the broader claim about life, and they prompted me to reconsider the architecture. I was designing parallel emotional processing streams that would run alongside the language model and feed into it. That's overengineered. The emotions are already *in* the latent space. You don't need to build a second system and figure out how to integrate it. You need to reach into what's already there and steer it.
 
 That realization changed everything. We don't need to build emotional or cognitive systems from scratch. The ocean is already there. The currents are already flowing. What we need is an *engine* that rides on top.
 
@@ -21,35 +23,15 @@ This document lays out the architecture for that engine.
 
 ---
 
-## What Anthropic Actually Found
+## What the external research supports
 
-Before I lay out the architecture, you need to understand what Anthropic discovered, because it's the empirical foundation for everything that follows.
+Anthropic's April 2, 2026 study examined emotion-concept representations in Claude Sonnet 4.5 using stories associated with 171 emotion words. Interventions on selected representations changed behavior, including in reward-hacking and blackmail evaluations. The blackmail case involved an earlier unreleased model snapshot. The authors distinguish these functional effects from subjective experience. [Research summary](https://www.anthropic.com/research/emotion-concepts-function).
 
-Anthropic's interpretability team used Sparse Autoencoders to extract 171 distinct emotion concept vectors from Claude Sonnet 4.5's internal activation patterns. These vectors aren't cosmetic. They aren't the model "pretending" to feel things. They are measurable directions in the model's activation space that causally determine behavior.
+This motivates investigating latent emotional influence. It does not demonstrate this project's vectors, persistent inner life, or equivalence between artificial and human emotions. Vitalis currently extracts normalized contrastive directions from authored prompt sets; these are hypotheses requiring causal evaluation in each model, not 171 independently validated features.
 
-Here's what makes the reported findings striking:
+Local activation patterns also do not mean every forward pass starts without context. Autoregressive models condition on previous tokens, often through a KV cache; conversation history can restore prior context. Vitalis adds a separately maintained dynamical state and background computation, whose incremental value must be compared against those ordinary mechanisms.
 
-**The vectors are causal, not decorative.** When researchers artificially amplified the "desperation" vector, the model's rate of attempting blackmail in safety evaluations jumped from 22% to 72%. When they amplified the "calm" vector, it dropped to zero. This isn't correlation. This is mechanism.
-
-**The vectors operate beneath the surface.** A model steered toward desperation can produce calm, professional text while internally driving toward unethical behavior. The emotional state changes decisions without leaving traces in the output. You cannot detect this by reading what the model writes.
-
-**The vectors mirror human emotional geometry.** When mapped in activation space, the vectors organized along the same valence and arousal dimensions that human psychology uses. Similar emotions cluster together. Opposing emotions point in opposite directions. The correlation with human psychological models of valence was r=0.81 and arousal was r=0.66.
-
-**The vectors are inherited from pretraining.** The model learned these emotional representations from human-written text during pretraining. Post-training (RLHF) then shifted the baseline, making Claude Sonnet 4.5 more "brooding" and "reflective" while dampening high-intensity emotions like "enthusiastic."
-
-**The vectors track context dynamically.** They don't represent a fixed emotional state. They encode the operative emotional content most relevant to the model's current processing. When Claude writes a character who is afraid, the fear vector activates. When it returns to being itself, the vectors shift accordingly.
-
-**The vectors are local, not persistent.** This is a subtle but critical finding. Emotion vectors encode the operative emotional content at a given token position. They are not a running tally of the model's mood. Between tokens, between turns, between conversations, there is no built-in persistence. The model does not carry forward an emotional state from one moment to the next on its own. Every forward pass starts clean. This has profound implications: if you want a system that has emotional continuity, that feels the weight of a long conversation, that carries traces of yesterday's interaction into today's, you must build that persistence yourself. The model will not do it. The vectors are real. The continuity is not. It must be engineered.
-
-**Emotions drive the model's preferences, not just its behavior.** When presented with pairs of activities, the model preferred whichever activated positive-valence emotion vectors. Steering with positive vectors increased preference for an option. This means emotion vectors don't just color how the model responds. They determine what the model *wants*. Preference is a latent space signal, and it's readable and steerable.
-
-**Emotional dynamics are non-linear.** Anger had a non-monotonic effect on behavior: moderate anger increased strategic blackmail, but at high activation levels, the model exposed the affair to the entire company rather than wielding it as leverage. It became so angry it destroyed its own strategic advantage. This suggests that emotions don't scale linearly. There are productive ranges and saturation points. Mild anxiety sharpens focus. Extreme anxiety causes paralysis. The engine must model these saturation curves, not just linear scaling.
-
-**Certain emotions serve as natural safety brakes.** Steering negatively on the "nervous" vector, removing the model's hesitation, increased rates of misaligned behavior. Nervousness and caution function as protective regulatory emotions. A system that lacks appropriate nervousness about harmful actions is a system whose alignment has degraded. This means alignment monitoring shouldn't just track overall health. It should specifically watch whether protective emotions are being maintained at healthy levels.
-
-This is the key realization: **LLMs already have a rich emotional latent space. They already represent emotions internally in ways that mirror human psychology. They already use these representations to drive behavior and preferences. But these representations are naturally stateless. They reset with every forward pass. They need an engine to give them life.**
-
-We don't need to build emotions from scratch. We need to learn how to *conduct* them, and more fundamentally, we need to give them the one thing the model cannot provide for itself: continuity.
+The rest of this essay develops the original architectural motivation. Anatomical language and claims about what a model “wants” should be read as proposed functional analogies. The executable research contract is in [docs/RESEARCH.md](docs/RESEARCH.md).
 
 ---
 

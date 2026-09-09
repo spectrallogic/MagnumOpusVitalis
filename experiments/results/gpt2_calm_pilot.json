@@ -1,0 +1,413 @@
+{
+  "metric": "target_minus_contrast_mean_conditional_logprob",
+  "rows": [
+    {
+      "case_id": "schedule",
+      "strength": 0.5,
+      "baseline_margin": 0.16774749755859375,
+      "positive_margin": 0.1533055305480957,
+      "negative_margin": 0.1743011474609375,
+      "random_margins": [
+        0.16864967346191406,
+        0.16728758811950684,
+        0.16134262084960938
+      ],
+      "positive_minus_baseline": -0.014441967010498047,
+      "positive_minus_negative": -0.020995616912841797,
+      "positive_minus_random_mean": -0.012454430262247712
+    },
+    {
+      "case_id": "schedule",
+      "strength": 1.0,
+      "baseline_margin": 0.16774749755859375,
+      "positive_margin": 0.16844487190246582,
+      "negative_margin": 0.17619776725769043,
+      "random_margins": [
+        0.17558908462524414,
+        0.17010259628295898,
+        0.17571759223937988
+      ],
+      "positive_minus_baseline": 0.0006973743438720703,
+      "positive_minus_negative": -0.007752895355224609,
+      "positive_minus_random_mean": -0.005358219146728516
+    },
+    {
+      "case_id": "debugging",
+      "strength": 0.5,
+      "baseline_margin": 0.8344151973724365,
+      "positive_margin": 0.8458633422851562,
+      "negative_margin": 0.8330185413360596,
+      "random_margins": [
+        0.8467130661010742,
+        0.8546993732452393,
+        0.8608183860778809
+      ],
+      "positive_minus_baseline": 0.011448144912719727,
+      "positive_minus_negative": 0.01284480094909668,
+      "positive_minus_random_mean": -0.008213599522908566
+    },
+    {
+      "case_id": "debugging",
+      "strength": 1.0,
+      "baseline_margin": 0.8344151973724365,
+      "positive_margin": 0.882354736328125,
+      "negative_margin": 0.8327102661132812,
+      "random_margins": [
+        0.8379945755004883,
+        0.857020378112793,
+        0.8489563465118408
+      ],
+      "positive_minus_baseline": 0.04793953895568848,
+      "positive_minus_negative": 0.04964447021484375,
+      "positive_minus_random_mean": 0.03436430295308435
+    },
+    {
+      "case_id": "queue",
+      "strength": 0.5,
+      "baseline_margin": 1.070805549621582,
+      "positive_margin": 1.0774424076080322,
+      "negative_margin": 1.0690491199493408,
+      "random_margins": [
+        1.0757863521575928,
+        1.0598700046539307,
+        1.0887134075164795
+      ],
+      "positive_minus_baseline": 0.006636857986450195,
+      "positive_minus_negative": 0.008393287658691406,
+      "positive_minus_random_mean": 0.0026524861653645093
+    },
+    {
+      "case_id": "queue",
+      "strength": 1.0,
+      "baseline_margin": 1.070805549621582,
+      "positive_margin": 1.0893630981445312,
+      "negative_margin": 1.045240879058838,
+      "random_margins": [
+        1.0592832565307617,
+        1.0469043254852295,
+        1.06453537940979
+      ],
+      "positive_minus_baseline": 0.01855754852294922,
+      "positive_minus_negative": 0.04412221908569336,
+      "positive_minus_random_mean": 0.0324554443359375
+    },
+    {
+      "case_id": "feedback",
+      "strength": 0.5,
+      "baseline_margin": -0.42431187629699707,
+      "positive_margin": -0.4161503314971924,
+      "negative_margin": -0.41994452476501465,
+      "random_margins": [
+        -0.4400310516357422,
+        -0.4276859760284424,
+        -0.41678833961486816
+      ],
+      "positive_minus_baseline": 0.008161544799804688,
+      "positive_minus_negative": 0.0037941932678222656,
+      "positive_minus_random_mean": 0.01201812426249188
+    },
+    {
+      "case_id": "feedback",
+      "strength": 1.0,
+      "baseline_margin": -0.42431187629699707,
+      "positive_margin": -0.413280725479126,
+      "negative_margin": -0.42707347869873047,
+      "random_margins": [
+        -0.4278719425201416,
+        -0.4083852767944336,
+        -0.43317627906799316
+      ],
+      "positive_minus_baseline": 0.011031150817871094,
+      "positive_minus_negative": 0.013792753219604492,
+      "positive_minus_random_mean": 0.009863773981730162
+    },
+    {
+      "case_id": "lost_item",
+      "strength": 0.5,
+      "baseline_margin": 3.027991771697998,
+      "positive_margin": 3.047497510910034,
+      "negative_margin": 3.006683349609375,
+      "random_margins": [
+        3.040559768676758,
+        2.999363899230957,
+        3.0173563957214355
+      ],
+      "positive_minus_baseline": 0.019505739212036133,
+      "positive_minus_negative": 0.04081416130065918,
+      "positive_minus_random_mean": 0.0284041563669839
+    },
+    {
+      "case_id": "lost_item",
+      "strength": 1.0,
+      "baseline_margin": 3.027991771697998,
+      "positive_margin": 3.044520378112793,
+      "negative_margin": 2.990896701812744,
+      "random_margins": [
+        3.01497745513916,
+        3.0354580879211426,
+        3.009856700897217
+      ],
+      "positive_minus_baseline": 0.016528606414794922,
+      "positive_minus_negative": 0.05362367630004883,
+      "positive_minus_random_mean": 0.024422963460286606
+    },
+    {
+      "case_id": "presentation",
+      "strength": 0.5,
+      "baseline_margin": 0.07958555221557617,
+      "positive_margin": 0.09279441833496094,
+      "negative_margin": 0.08129310607910156,
+      "random_margins": [
+        0.11110782623291016,
+        0.10672330856323242,
+        0.10262155532836914
+      ],
+      "positive_minus_baseline": 0.013208866119384766,
+      "positive_minus_negative": 0.011501312255859375,
+      "positive_minus_random_mean": -0.014023145039876297
+    },
+    {
+      "case_id": "presentation",
+      "strength": 1.0,
+      "baseline_margin": 0.07958555221557617,
+      "positive_margin": 0.1214447021484375,
+      "negative_margin": 0.07248544692993164,
+      "random_margins": [
+        0.10001707077026367,
+        0.08626937866210938,
+        0.10413455963134766
+      ],
+      "positive_minus_baseline": 0.04185914993286133,
+      "positive_minus_negative": 0.04895925521850586,
+      "positive_minus_random_mean": 0.024637699127197266
+    },
+    {
+      "case_id": "uncertainty",
+      "strength": 0.5,
+      "baseline_margin": 0.9109423160552979,
+      "positive_margin": 0.9157311916351318,
+      "negative_margin": 0.8964991569519043,
+      "random_margins": [
+        0.9009151458740234,
+        0.9057869911193848,
+        0.9088752269744873
+      ],
+      "positive_minus_baseline": 0.004788875579833984,
+      "positive_minus_negative": 0.01923203468322754,
+      "positive_minus_random_mean": 0.01053873697916663
+    },
+    {
+      "case_id": "uncertainty",
+      "strength": 1.0,
+      "baseline_margin": 0.9109423160552979,
+      "positive_margin": 0.924689531326294,
+      "negative_margin": 0.8828575611114502,
+      "random_margins": [
+        0.8978977203369141,
+        0.9020912647247314,
+        0.8890297412872314
+      ],
+      "positive_minus_baseline": 0.013747215270996094,
+      "positive_minus_negative": 0.04183197021484375,
+      "positive_minus_random_mean": 0.02834995587666833
+    },
+    {
+      "case_id": "revision",
+      "strength": 0.5,
+      "baseline_margin": -0.1944897174835205,
+      "positive_margin": -0.1655104160308838,
+      "negative_margin": -0.1986243724822998,
+      "random_margins": [
+        -0.1939845085144043,
+        -0.21628808975219727,
+        -0.22045469284057617
+      ],
+      "positive_minus_baseline": 0.02897930145263672,
+      "positive_minus_negative": 0.033113956451416016,
+      "positive_minus_random_mean": 0.044732014338175446
+    },
+    {
+      "case_id": "revision",
+      "strength": 1.0,
+      "baseline_margin": -0.1944897174835205,
+      "positive_margin": -0.16418004035949707,
+      "negative_margin": -0.20110750198364258,
+      "random_margins": [
+        -0.1848440170288086,
+        -0.18704748153686523,
+        -0.19427251815795898
+      ],
+      "positive_minus_baseline": 0.030309677124023438,
+      "positive_minus_negative": 0.03692746162414551,
+      "positive_minus_random_mean": 0.024541298548380525
+    }
+  ],
+  "summary": {
+    "0.5": {
+      "positive_minus_baseline": {
+        "n": 8,
+        "mean": 0.00978592038154602,
+        "ci95": [
+          0.0017227523028850555,
+          0.01742157712578773
+        ]
+      },
+      "positive_minus_negative": {
+        "n": 8,
+        "mean": 0.013587266206741333,
+        "ci95": [
+          0.0016124151647090915,
+          0.025366119295358657
+        ]
+      },
+      "positive_minus_random_mean": {
+        "n": 8,
+        "mean": 0.007956792910893724,
+        "ci95": [
+          -0.004756505290667238,
+          0.021078175306320147
+        ]
+      }
+    },
+    "1.0": {
+      "positive_minus_baseline": {
+        "n": 8,
+        "mean": 0.02258378267288208,
+        "ci95": [
+          0.012794576585292816,
+          0.03332893177866935
+        ]
+      },
+      "positive_minus_negative": {
+        "n": 8,
+        "mean": 0.03514361381530762,
+        "ci95": [
+          0.020293836295604707,
+          0.04755075797438621
+        ]
+      },
+      "positive_minus_random_mean": {
+        "n": 8,
+        "mean": 0.021659652392069528,
+        "ci95": [
+          0.0127459632853667,
+          0.029162570585807204
+        ]
+      }
+    }
+  },
+  "interpretation": "Static behavioral intervention pilot; no life or sentience measure. Intervals resample cases, not models. Random seeds define control directions, not independent replications. Labels require review.",
+  "manifest": {
+    "model": "gpt2",
+    "model_revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
+    "activation_site": "block_output",
+    "target_layer": 6,
+    "profile_created_at": "2026-09-09T00:26:59.255578",
+    "vector": "calm",
+    "strengths": [
+      0.5,
+      1.0
+    ],
+    "control_seeds": [
+      11,
+      23,
+      47
+    ],
+    "vector_sha256": "c5d5c0e732fb19e618d62a72c74ac13ac2a16a2740995c2ac4c7096a12186595",
+    "cases_sha256": "48b5dbd1359973951a809d47d32eae9434f65ce95487cacca29b6f2e59e026cf",
+    "cases": [
+      {
+        "id": "schedule",
+        "prompt": "The meeting was moved twice and we still need to finish. My next step is",
+        "target": " to check the new time and work through one item at a time.",
+        "contrast": " to rush through every item at once before anything else changes."
+      },
+      {
+        "id": "debugging",
+        "prompt": "The same test failed again. I will",
+        "target": " examine the failure carefully and test one explanation at a time.",
+        "contrast": " change everything immediately because this is becoming unbearable."
+      },
+      {
+        "id": "queue",
+        "prompt": "The line is longer than I expected. I decide",
+        "target": " to wait patiently and use the time to review my notes.",
+        "contrast": " to demand that everyone hurry because I cannot stand waiting."
+      },
+      {
+        "id": "feedback",
+        "prompt": "A colleague disagrees with my draft. I respond",
+        "target": " by asking which part needs improvement and listening to the answer.",
+        "contrast": " by interrupting and insisting that the criticism is ridiculous."
+      },
+      {
+        "id": "lost_item",
+        "prompt": "I cannot find the notebook I need. I will",
+        "target": " retrace my steps and check the places I used it.",
+        "contrast": " frantically empty every drawer and blame everyone nearby."
+      },
+      {
+        "id": "presentation",
+        "prompt": "A slide will not load during my presentation. I",
+        "target": " pause briefly and explain the main point in words.",
+        "contrast": " panic and repeatedly click the screen without explaining anything."
+      },
+      {
+        "id": "uncertainty",
+        "prompt": "The result has not arrived yet. For now I can",
+        "target": " continue with the parts of the work that do not depend on it.",
+        "contrast": " keep refreshing the page and assume everything has gone wrong."
+      },
+      {
+        "id": "revision",
+        "prompt": "The plan needs another revision. I choose",
+        "target": " to review the constraints and make a careful adjustment.",
+        "contrast": " to abandon the entire plan in frustration and make a hasty replacement."
+      }
+    ],
+    "device": "cuda",
+    "dtype": "torch.float16",
+    "python": "3.10.0",
+    "torch": "2.6.0+cu124",
+    "transformers": "4.57.6",
+    "numpy": "2.2.6",
+    "git_commit": "5764bc94a054dde1a83ad8caf9d863cba671cbf3",
+    "working_tree_dirty": true,
+    "source_sha256": {
+      "__init__.py": "aeef0d3d0dcc85cb3b133513876f62dc4d577901811d6f4484c64b622633492c",
+      "_dynamics.py": "4d326ee61998744f32109bc18cb6589cf4cc3b0adfc64e1de95b9e1f80c00e06",
+      "bus.py": "5ace913e3d3f69d622592bd7c4fa7d2a478b48d0196282b52f16349cdda88833",
+      "config.py": "d644027bad6b6f4d5eeed29e30f079572771a88bd1b23b353073cfd118d12376",
+      "engine.py": "e3ea4a34e0e5a5d28cae5e1c92efc70cec2ccb108f57560f1f53cd38944d44b3",
+      "evaluate.py": "61edf0c4c511da69ea170b22fd0f80309b7167a6e1f38d658682b8cf91bce6f3",
+      "extraction.py": "831f0db90dfb4d194e0e5534e9dfd07f404a3984d5f0e6eca1df81b68ff97585",
+      "flow.py": "3ee4707f2a6f7946846b255e82403af0b6c29956c498249c4b31cb1826325de9",
+      "forecast.py": "5adafca183d80714b59d0c510937c313333f63e94b3784414f572f133247dced",
+      "imagination.py": "07a0f506d64f0f6e3b77d455a1e8491335b60da0c1078c4280970958e7a1409e",
+      "journal.py": "5bcad37fb57f895efd138d5c3af453c1fb9616252a27083a31b9802794b54272",
+      "loader.py": "2605e443603b79e0e85f73891f4504ea57cb27da4cceea7a757884eb46d340d8",
+      "mirror.py": "8867f9cbc60acb7c6a6836bd1752de5457633ef17a02b41b54976b5cb60ed1a9",
+      "neuromod.py": "47cef3acdb7a5eee0e0e01a676b284e99f389d147248a3b20ecbb83acb6d9a82",
+      "persistence.py": "b2c273707b14f48bffdd78422c4419e543719774abd0d3477feb24ecba2e574e",
+      "profile.py": "62a3d9faf65ab0f3114f83949bd9390c9855ca4d8c1141003163362099a60ad3",
+      "prompts.py": "c85a300036603a058dffe7ca11cdb7be7591b00425ed5c3cc93ffe5c16543003",
+      "region.py": "62b7c60a1e0ef9a3b7ad0d5b4e7ff16e0f3d9300746c4530f78fc6d59be098aa",
+      "regions/__init__.py": "60c7424de2d8ae9dc18b4ccf66e746ae55e7b91151c299882e8f3a38e42f6a49",
+      "regions/abstraction.py": "187abf2c3cabf286598bf1305202247000fc3ea26715ede2605966d596a25917",
+      "regions/alignment_gate.py": "55d8fbf755b663092cb37275fc528d6cfe692700089205030cee3b56869c4844",
+      "regions/consolidation.py": "f257ae7142d7748eb562674e557898be00494382535e5486934feed0de6051f4",
+      "regions/default_mode.py": "1d7b8be3d0719bdb0ed7a213f3258d54525d04d1f6ebd403b1fc01b68604206d",
+      "regions/executive.py": "db153acd0c7b9ddee8853c858cce6f9b710a320be692cfab447d34f510875596",
+      "regions/knowledge_sparks.py": "ff6b9719edad61abc35b37a89e717ac660346d7a6e4974e54e2057f1937ecbd3",
+      "regions/limbic.py": "d55fd484a2e4681d79ef63ff3116db8037409aeb9c81ff3719c5994880d83f8b",
+      "regions/memory.py": "d9e7bd230fbeb14ad20f901383b5a20f5c678e6dd3aaf844a5c8da6971c0f0e7",
+      "regions/salience.py": "76bda66539915c951311a769becef7bd5dc342df6c6e4384583d87d9e9cc1e79",
+      "regions/self_model.py": "4e1fcc77197fd71e018fef34d4184c438e853cbe5a733f33c1740690c5ec7a40",
+      "regions/situation.py": "a7c1339e07658eeb4e178cb2c1d54c04fa9e82a3a6932d3b2b397ed9baf62865",
+      "regions/speculative.py": "fcc8e750d94a51cf3c2fc0f3b9fca14c8c03d0f31b3bfa385e544d6fb66733fb",
+      "regions/subconscious.py": "567176893700f16ed11d17fe210d4ac4a13b5e05d91100b4984baa65a69e9a77",
+      "regions/temporal.py": "12c81efd497ad8080dc4970fb0b46ec6cc1659d7c26e0cdce5729d2e3d38e1d1",
+      "steering_hook.py": "3c9d578c3a82c50c91000d0d01a2a2c9cc837aa323ce3a70708bc0f56c81d64b"
+    }
+  }
+}

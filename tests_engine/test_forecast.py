@@ -77,3 +77,16 @@ def test_open_set_is_bounded_honestly():
     m = led.metrics()
     assert m["open"] == 10
     assert m["expired"] == 15              # evictions counted, not hidden
+
+
+def test_ece_uses_actual_confidence_and_predicted_outcome_state():
+    led = ForecastLedger(horizon_s=0)
+    truth = torch.tensor([1.0, 0.0])
+    future = _future(torch.tensor([0.0, 1.0]), 1.0)
+    future["predicted_state"] = truth
+    led.record([future], tick=0)
+    led.resolve(truth)
+    metrics = led.metrics()
+    assert metrics["hit_rate"] == 1.0
+    assert metrics["brier"] == 0.0
+    assert metrics["ece"] == 0.0  # midpoint approximation incorrectly gives .05

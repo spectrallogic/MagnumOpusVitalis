@@ -18,7 +18,7 @@ BELIEF WITH A DUE DATE:
   calibrate— running Brier score and 10-bin reliability table of
              stated probability vs realized hit rate, per mode
              (speech / world / user).
-  correct  — once enough resolutions exist, a per-bin monotone map
+  correct  — once enough resolutions exist, a per-bin empirical map
              turns raw chain confidence into probability_cal: what
              "likely" has MEASURABLY meant. The consumer is
              speculation's own utility ranking (speculative.py), which
@@ -27,9 +27,9 @@ BELIEF WITH A DUE DATE:
 Honesty notes: chain confidence was never designed to be a
 probability — the whole point of calibration is to MEASURE how far
 from one it is, and the reliability table ships to the dashboard
-whichever way it comes out. The ledger is in-memory per session (the
-engine is a per-process runtime; primordium is the persistent
-organism, and its Wheel keeps its own calibration ring).
+whichever way it comes out. Engine persistence stores the calibration
+bins and pending forecasts. This remains a latent-similarity proxy,
+not a check that the forecast's verbal proposition occurred.
 """
 
 import itertools
@@ -65,7 +65,8 @@ class ForecastLedger:
         now = time.monotonic()
         with self._lock:
             for f in futures:
-                if f.get("vec") is None:
+                forecast_vec = f.get("predicted_state", f.get("vec"))
+                if forecast_vec is None:
                     continue
                 fid = next(self._ids)
                 self.open.append({
@@ -75,7 +76,7 @@ class ForecastLedger:
                     "mode": f.get("mode", "world"),
                     "source": f.get("source", "?"),
                     "phrase": (f.get("name") or "")[:48],
-                    "vec": f["vec"].detach().float().cpu(),
+                    "vec": forecast_vec.detach().float().cpu(),
                     "probability": float(f.get("probability", 0.0)),
                     "utility": float(f.get("utility", 0.0)),
                     "deadline": now + self.horizon_s,
@@ -161,7 +162,9 @@ class ForecastLedger:
     def calibrated(self, probability: float, mode: str) -> Optional[float]:
         """Observed hit-rate of this probability's bin, once enough
         resolutions exist. None until the ledger has earned an opinion."""
-        bins = self._bins.get(mode)
+        with self._lock:
+            bins = self._bins.get(mode)
+            bins = [list(b) for b in bins] if bins is not None else None
         if bins is None:
             return None
         total = sum(n for n, _ in bins)
@@ -190,24 +193,29 @@ class ForecastLedger:
                     briers.append((f["probability"] - y) ** 2)
                 out["brier"] = round(sum(briers) / len(briers), 4)
                 out["hit_rate"] = round(hits / len(closed), 4)
-                # 10-bin ECE across modes pooled
-                pooled = [[0, 0] for _ in range(10)]
-                for mode_bins in self._bins.values():
-                    for i, (n, h) in enumerate(mode_bins):
-                        pooled[i][0] += n
-                        pooled[i][1] += h
-                total = sum(n for n, _ in pooled)
+                # Same resolved window as Brier; use actual mean confidence,
+                # not bin centers or the lifetime calibration training counts.
+                pooled = [[0, 0, 0.0] for _ in range(10)]
+                for f in closed:
+                    p = min(max(f["probability"], 0.0), 1.0)
+                    b = min(int(p * 10), 9)
+                    pooled[b][0] += 1
+                    pooled[b][1] += int(f["status"] == "hit")
+                    pooled[b][2] += p
+                total = len(closed)
                 ece = 0.0
-                for i, (n, h) in enumerate(pooled):
+                for n, h, p_sum in pooled:
                     if n == 0:
                         continue
-                    conf = (i + 0.5) / 10
+                    conf = p_sum / n
                     ece += (n / total) * abs(h / n - conf)
                 out["ece"] = round(ece, 4)
             return out
 
     def snapshot(self) -> dict:
         m = self.metrics()
+        m["event_definition"] = "latent cosine >= threshold on a new percept after deadline"
+        m["hit_cos"] = self.hit_cos
         with self._lock:
             m["recent"] = [
                 {k: f[k] for k in ("phrase", "mode", "probability",

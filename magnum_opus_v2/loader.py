@@ -1,80 +1,79 @@
-"""Model loading utilities. Supports any HuggingFace causal LM."""
+"""Load local Transformers causal LMs with access to their transformer blocks."""
+
+import gc
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+from magnum_opus_v2.model_sources import validate_model_source
 
 
-def load_model(model_name: str = "gpt2", device: str = None):
+def load_model(model_name: str = "gpt2", device: str = None, *,
+               local_files_only: bool = False, trust_remote_code: bool = False):
+    """Return (model, tokenizer, device); the launcher defaults to local files only.
+
+    Supported hooks require a recognized transformer block list. A local server's
+    chat API and GGUF files cannot provide these hooks. Custom model code is
+    opt-in. CPU fallback uses one complete model, avoiding unsupported sharding.
     """
-    Load a HuggingFace causal language model.
-
-    Args:
-        model_name: Any HuggingFace model ID (gpt2, gpt2-medium, meta-llama/Llama-3-8B, etc.)
-        device: "cpu", "cuda", "mps", or None for auto-detect
-
-    Returns:
-        (model, tokenizer, device_str)
-    """
-    if device is None:
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
+    model_name = validate_model_source(model_name)
+    if device in (None, "auto"):
+        device = ("cuda" if torch.cuda.is_available() else
+                  "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                  else "cpu")
+    if device == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA is unavailable in this PyTorch installation. Use --device cpu or install a CUDA-enabled PyTorch build.")
+    if device == "mps" and not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+        raise ValueError("MPS is unavailable. Use --device cpu or --device auto.")
 
     print(f"  Loading '{model_name}' on {device}...", flush=True)
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    options = dict(local_files_only=local_files_only, trust_remote_code=trust_remote_code)
+    config = AutoConfig.from_pretrained(model_name, **options)
+    if getattr(config, "quantization_config", None):
+        raise ValueError("Pre-quantized checkpoints need a separately verified hook/device adapter. Use the standard Transformers weights for this launcher.")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, **options)
     if tokenizer.pad_token is None:
+        if tokenizer.eos_token is None:
+            raise ValueError("This tokenizer has neither a padding nor an EOS token; it needs a tokenizer adapter.")
         tokenizer.pad_token = tokenizer.eos_token
 
-    if device == "cuda":
-        try:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name, dtype=torch.float16,
-                trust_remote_code=True,
-            ).to(device)
-        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-            if "out of memory" not in str(e).lower() and "CUDA" not in str(e):
-                raise
-            torch.cuda.empty_cache()
-            free_bytes, total_bytes = torch.cuda.mem_get_info(0)
-            gpu_budget_gib = max(2, int(free_bytes / (1024 ** 3)) - 1)
-            print(f"  Model too large for VRAM alone — spilling to CPU RAM "
-                  f"(GPU budget: {gpu_budget_gib}GiB)")
-            try:
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_name, dtype=torch.float16,
-                    device_map="auto",
-                    max_memory={0: f"{gpu_budget_gib}GiB", "cpu": "48GiB"},
-                    trust_remote_code=True,
-                )
-            except Exception:
-                print(f"  Spill load failed — falling back to pure CPU")
-                torch.cuda.empty_cache()
-                device = "cpu"
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_name, dtype=torch.float32,
-                    trust_remote_code=True,
-                ).to(device)
-    else:
+    # Keep the reference before .to(): an OOM may have moved only some layers.
+    # Release that object before reloading so two model copies cannot stay live.
+    model = None
+    cpu_fallback = False
+    try:
         model = AutoModelForCausalLM.from_pretrained(
-            model_name, trust_remote_code=True,
-        ).to(device)
+            model_name, torch_dtype=torch.float16 if device != "cpu" else torch.float32,
+            **options,
+        )
+        if getattr(model, "is_quantized", False):
+            raise ValueError("Pre-quantized checkpoints need a separately verified hook/device adapter. Use the standard Transformers weights for this launcher.")
+        model = model.to(device)
+    except torch.cuda.OutOfMemoryError:
+        if device != "cuda":
+            raise
+        model = None
+        cpu_fallback = True
+    if cpu_fallback:
+        # Exit the exception handler first: its traceback can retain the old model.
+        gc.collect()
+        torch.cuda.empty_cache()
+        print("  Model exceeds available VRAM. Loading on CPU; responses will be slower.", flush=True)
+        device = "cpu"
+        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32, **options)
 
     model.eval()
-
-    if hasattr(model.config, "n_layer"):
-        n_layers = model.config.n_layer
-        hidden_dim = model.config.n_embd
-    elif hasattr(model.config, "num_hidden_layers"):
-        n_layers = model.config.num_hidden_layers
-        hidden_dim = model.config.hidden_size
-    else:
-        raise ValueError(f"Cannot detect layer count for model {model_name}")
-
+    from magnum_opus_v2.steering_hook import SteeringHook
+    try:
+        layers = SteeringHook._layer_list(model)
+    except ValueError as exc:
+        raise ValueError(
+            f"{type(model).__name__} needs a Vitalis block adapter. Currently supported "
+            "layouts include GPT-2, Llama/Qwen/Mistral, GPT-NeoX, and OPT transformer blocks."
+        ) from exc
+    if not layers:
+        raise ValueError("The model has no transformer blocks.")
+    hidden_dim = model.get_input_embeddings().weight.shape[1]
     param_count = sum(p.numel() for p in model.parameters()) / 1e6
-    print(f"  Loaded: {n_layers} layers, {hidden_dim}d hidden, {param_count:.1f}M params")
-
+    print(f"  Loaded: {len(layers)} layers, {hidden_dim}d hidden, {param_count:.1f}M params")
     return model, tokenizer, device

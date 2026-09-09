@@ -1,377 +1,197 @@
 # Magnum Opus Vitalis
 
-**An open-source engine that gives any frozen LLM emotional continuity, a subconscious, and a continuously-running inner state at inference time.**
-![Vitalis.png](images/Vitalis.png)
-A living LoRA: instead of static weight modifications, this engine maintains a continuous latent substrate (`LatentBus`) populated by a small set of brain regions running on multi-rate clocks. Every flow tick, the regions perturb the bus; during generation, **every token's forward pass reads the bus at that moment** and adds it to the model's hidden states via a forward hook — so the mind keeps moving while it speaks, and the voice moves with it. The base model never changes. The experience of interacting with it changes fundamentally.
+**A research engine for persistent affect, layered subconscious activity, and recursive imagination around a frozen language model.**
 
-Talk to it face-to-face (voice in, emotionally-modulated voice out): `python compare_server.py --profile` → **http://127.0.0.1:5000/face** (the 3D voxel face; the legacy 2D face lives at `/face2d`, the research dashboard at `/`)
+![Vitalis](images/Vitalis.png)
 
-Built on Anthropic's reported finding that LLMs contain 171+ causal emotion vectors in their latent space (the engine treats this as its working premise; see PAPER.md for framing). The engine doesn't build emotions from scratch — it gives biologically-inspired temporal dynamics to what's already there.
+The ambition is to explore what it would take to give AI a continuing inner life. The engineering hypothesis is concrete: maintain state between interactions, extract emotion-related directions from a model, and let an evolving background process influence its next computation. “Living LoRA” is the project's metaphor for that changing influence; the engine adds activations during inference and does not train a LoRA or change the LLM's weights.
 
----
+This repository implements functional mechanisms. It does not demonstrate biological life, subjective feeling, consciousness, or human-equivalent cognition. Those questions remain open; a convincing demonstration needs more than an expressive face or emotional language.
 
-> **New:** [Primordium v3](primordium/README.md) — a from-scratch
-> multimodal organism that learns online from camera and microphone
-> (no datasets, no LLM in the mind), mounted on this same substrate.
-> v3 grows its own brain when learning saturates (Bloom —
-> function-preserving growth surgery, elastic to whatever GPU the life
-> runs on), attends over its own lifetime of banked latents (Reach),
-> and chooses where to look (Gaze — active attention chasing
-> prediction-error contrast). Era 4's audit replaced the hormone layer
-> with the Tide, set the motors learning by intrinsic-reward policy
-> gradient, and fitted the mood dynamics from lived activation — under
-> a standing rule: every scalar names its mechanism, its measured
-> cause, and its consumer. Era 7 made the hand load-bearing (Grip —
-> a supervised forward model of its own strokes, consumed under a
-> blindfold, with a live counterfactual on the dashboard; Era 6's
-> negative finding explained structurally and answered, two failed
-> designs kept on the record). `python -m primordium.run --new eden`
+## The two core ideas
 
-## The three pillars
+1. **Affect as latent geometry.** Contrastive examples identify candidate emotion directions at a particular transformer block. Persistent affect and modulation channels combine those directions into an evolving intervention. A vector is a first-order approximation to a representation, not a complete theory of human emotion or chemistry. Each direction must earn its interpretation through held-out behavioral experiments.
+2. **A layered subconscious.** A sea of noise, memory, and token proposals produces peaks of relevance. Background model rollouts explore possible continuations, recursively condition children on their parents, and weigh their paths. Selected hypotheses return to the fast upper layer and influence subsequent generation.
 
-**Pillar 1 — Controllable emotional engine.** A `LatentBus` shared across brain regions, driven by:
-- `Limbic` — three-channel emotion state (fast / medium / slow) with biological onset, decay, homeostasis, and a cross-emotion interaction matrix fitted by the Mirror from the model's implied emotional trajectories at profile-creation time (profiles without mirror dynamics fall back to a hand-authored matrix).
-- `Temporal` — subjective time perception from residual norm fade, emotional drift, interaction staleness, step count, and memory-importance decay. The magnitude is state-derived; a few gating signals (interaction freshness, speech cooldown, situation confidence) are plain wall-clock decays.
-- `NeuromodState` — four functional modulation channels (renamed from borrowed hormone names in Era 8: the mechanisms were always real, the pharmacology wasn't), and every effect is a real wired feedback loop (nothing decorative): **stress** (driven by sustained negative emotion, divergence, and imagined risk) amplifies threat-emotion onset and inflates speculation's risk weight; **reward** (driven by novelty spikes and high-benefit imagined futures) lowers the speech threshold, raises spark firing, widens the subconscious surprise channel, and inflates speculation's benefit weight; **calm** (earned by sustained stillness) speeds emotional decay to baseline, damps stimulation, and steadies the bus; **arousal** (driven by bus velocity and self-model surprise) raises substrate noise, emotional gain, and intrusive-thought loudness.
-- `SteeringHook` + `BusSteeringDriver` — the bridge to the model. In live mode the hook calls the driver on **every forward pass**, so each generated token is steered by the bus state at that instant; static mode serves one-shot silent passes (idle drift, imagination).
+There is relevant empirical precedent: Anthropic reports emotion-related representations with causal behavioral effects in Claude Sonnet 4.5, while explicitly leaving subjective experience unresolved. This does not validate this repository's vectors or establish the same result in every LLM. [Anthropic's research](https://www.anthropic.com/research/emotion-concepts-function).
 
-**Pillar 2 — Subconscious affecting decisions.** A four-layer `SubconsciousStack` that runs every flow tick (50ms):
-- **L0 (Sea)** — three samplers feed the substrate: gaussian noise, emotion-biased token embeddings, and live memory traces (including false memories from confabulation).
-- **L1 (Associative)** — cosine-filters L0 against the current bus state. Top-k by resonance.
-- **L2 (Relational)** — re-scores by emotional and velocity alignment. A surprise charge accumulates every tick (`l2_surprise_probability` scales the increments, reward speeds them); when the charge fills, a low-resonance candidate is promoted (the surprise channel).
-- **L3 (Emergent)** — picks the strongest survivor, optionally interpolates the top two, and emits an intrusive perturbation to the bus, gated by Salience's attention gain.
+The extraction/intervention approach is also related to [Contrastive Activation Addition](https://aclanthology.org/2024.acl-long.828/) and [Activation Addition](https://arxiv.org/abs/2308.10248). Vitalis's research question concerns what persistent feedback and background imagination add beyond static steering.
 
-The subconscious does not produce its own steering vector — it perturbs the bus, and the bus is what the steering hook reads. One state, many writers.
+## How it works
 
-**Pillar 3 — Speculation, development, and self.** Three regions complete the mind:
-- `SpeculativeFutures` — every ~1.5s (only when the model is idle), takes the subconscious's L2 survivors + the current trajectory + a memory trace + a wildcard, *lives each future* via a silent steered forward pass, and scores them by **probability** (next-token coherence) and **goodness** (how far the rollout's own hidden states move toward the model's positive-emotion directions vs a neutral baseline, in [-1, 1] — positive-only, no threat term). The most promising future pulls the bus toward it. Plausible runners-up are retained in the **penumbra** — a low-gain channel emitted faintly every flow tick: known, not attended. A good imagined future bumps reward; the worst-aligned imagined moment (`field_goodness`) is what tells the alignment gate to steer back toward good.
-- `AbstractionLadder` — developmental coarse-to-fine learning. Online k-means over lived latent states at 2 → 4 → 8 → 16 concepts, where deeper levels only **unlock with experience** (newborn → infant → child → adolescent → adult). Sky/ground before clouds/rocks. No gradients, no dataset — it adapts to any LLM in minutes of runtime. Novelty against the deepest known concept is the felt sense of curiosity (a reward bump). Each concept is labeled with its nearest vocabulary token for interpretability.
-- `SelfModel` — the memory-leakage theory of self-awareness, implemented literally. A slow identity EMA ("who I've been") that the present is gently pulled toward; recent memory traces **leak** back into the substrate every tick, and the mismatch between the echo and now is the felt rate of time passing. Felt time integrates experienced change (not wall clocks) — eventful seconds feel long, empty minutes feel short (live dilation factor in the dashboard). The region also predicts its own next state; self-surprise bumps arousal.
+```text
+noise + memory + token proposals
+            |
+     associative peaks <---- current state / affect
+            |                         |
+     fast relational filter           |
+            |                         |
+            +---> bounded future tree |
+            |     parent -> children  |
+            |     weigh entire paths  |
+            |              |          |
+            +<-- scored hypotheses    |
+            |                         |
+     upper-layer selection            |
+            |                         |
+         LatentBus -------------------+
+            |
+     transformer block output -> next-token distribution
+            ^
+     speech feedback / new percepts
+```
 
-**Realtime, all the way down.** Steering is live during generation: every token's forward pass reads the bus *at that moment*, and the flow clocks keep ticking while the model speaks — so an emotion onset, a spark decay, or an intrusive thought mid-sentence changes the voice mid-sentence.
+The fast path runs on the flow clock (default 50 ms) and makes no LLM calls. The slower imagination worker uses the same model when it can acquire the model lock. Its results remain available to fast ticks for a short, bounded time. While generation owns the model, new LLM imagination waits; cached hypotheses and substrate dynamics can continue evolving. This is concurrent state evolution, not simultaneous model generation and model imagination on one locked instance.
 
-**Accountable cognition (Era 6).** Three contracts now bind the engine, per docs/adr/: every substrate write is **signed** (`bus.provenance()` — source, kind, norm, clock for each perturbation, attractor, and baseline write); every memory carries an **epistemic type**, and imagination can no longer become belief — confabulated traces still swim in the subconscious sea by design, but they cannot teach the abstraction ladder, become bus attractors, or leak into the self-model's "what-just-was"; and every imagined future becomes an **accountable forecast** — the ForecastLedger gives speculation's futures stable ids and deadlines, resolves them against what the situation actually became, tracks Brier/ECE, and once it has earned an opinion, futures are ranked by what "likely" has *measurably* meant rather than by raw chain confidence (`snapshot()["forecasts"]`).
+The search has independent limits for event depth, branching, beam width, attempted nodes, total tokens, and elapsed time. `max_depth=1` provides a shallow-search ablation. Elapsed-time limits are cooperative: an in-flight forward can overrun the deadline and delay a waiting user turn.
 
----
+The winner and plausible alternatives influence the substrate; they remain tagged `imagined`. The existing forecast ledger measures a **latent-similarity proxy**, resolved when fresh perception arrives. Its token-chain confidence is not an event probability, and its affect score is not a measure of truth, ethics, or welfare.
 
 ## Quick start
 
-```bash
-pip install torch transformers numpy flask
-```
+Install Python 3.10+ and run these commands from the downloaded repository:
 
 ```bash
-# One-time: extract direction vectors and save them as a profile
-python -m magnum_opus_v2.profile create gpt2
+python -m pip install -r requirements.txt
+python run.py
 ```
+
+Choose a cached model from the numbered list, or enter the path to a local
+**Transformers checkpoint folder**. The launcher checks that the model supports
+activation steering, prepares its profile, and opens the dashboard. The first
+start calibrates the controller; subsequent starts reuse the saved profile.
+It loads one copy of the model and does not train or modify its weights.
+
+You can also select the model directly:
+
+```bash
+python run.py --model "/path/to/local/model"
+python run.py --model Qwen/Qwen2.5-3B-Instruct
+```
+
+Loading is **offline by default**. Hub IDs use weights already in your Hugging
+Face cache. To explicitly download a small mechanism-test model:
+
+```bash
+python run.py --model gpt2 --download
+```
+
+For a terminal-only startup test that generates a short reply and exits:
+
+```bash
+python run.py --model gpt2 --check
+```
+
+Useful options: `--list-models`, `--device cpu`, `--port 5001`, `--no-browser`,
+`--rebuild-profile`, and `--resume`. Run `python run.py --help` for details.
+Both `python compare_server.py` and the new launcher use the same setup flow.
+The old `--profile` flag is accepted; profile reuse is now automatic.
+
+### Which local models work?
+
+| Model setup | Current support |
+|---|---|
+| Transformers checkpoint folder with config, tokenizer and standard weights | Supported when its transformer blocks pass the startup check |
+| Cached Hugging Face causal LM | Discovered automatically; selected snapshots are loaded from disk |
+| GPT-2, Llama/Qwen/Mistral, GPT-NeoX/Pythia, OPT block layouts | Adapters included; startup verifies the actual loaded model |
+| Ollama or LM Studio chat endpoint, GGUF/GGML file | Requires a different engine adapter; text APIs cannot expose the needed activations |
+| Pre-quantized Transformers checkpoint | Requires separate hook/device verification; the launcher currently asks for standard weights |
+
+“Local” does not guarantee compatibility: Vitalis reads and changes internal
+transformer activations. A model with an unfamiliar layout gets an explanation
+before calibration. Custom model code is disabled unless you pass
+`--trust-remote-code`. Models, profiles, and memory remain specific to their
+own representations.
+
+The launcher selects CUDA, MPS, or CPU according to your PyTorch installation.
+If the model exceeds CUDA memory during loading, it falls back to a complete
+CPU model. Allow additional memory for generation, the vocabulary copy, and
+the engine's background work; loading successfully is not a peak-memory guarantee.
+CPU inference on large models can be slow. A smaller model is the quickest
+mechanism check. Dependencies are restricted to the Transformers 4.x API;
+the startup suite has been exercised with PyTorch 2.6 and Transformers 4.57.6.
+
+### Python integration
 
 ```python
 from magnum_opus_v2 import V2Engine, load_model, load_profile
 
 model, tokenizer, device = load_model("gpt2")
-profile = load_profile("gpt2")
-engine = V2Engine.from_profile(model, tokenizer, profile, device=device)
-
-engine.start()                              # spin up multi-rate flow
-print(engine.converse("Hello, how are you?"))
-print(engine.snapshot())                    # full state — every region
-engine.stop()
+engine = V2Engine.from_profile(model, tokenizer, load_profile("gpt2"), device=device)
+engine.start()
+try:
+    print(engine.converse("Hello. What are you thinking about?"))
+    print(engine.snapshot()["speculative"])
+finally:
+    engine.stop()
 ```
 
-`converse()` takes one turn and returns the reply; the engine carries emotional state, memory, chat history, and subconscious activity across turns automatically. If executive pressure crosses threshold during idle, the engine emits autonomous speech — drain it with `engine.drain_autonomous_messages()`.
+For this Python example, first create a profile with
+`python -m magnum_opus_v2.profile create gpt2`. The launcher handles that step
+automatically. GPT-2 is useful for inexpensive mechanism checks; conversational
+quality depends on the underlying model. Latent profiles and memories cannot
+be transferred between models merely because their dimensions match.
 
-### Use a real conversational model
+See [integration instructions](docs/INTEGRATION.md). The engine can retain state across turns and supports explicit save/resume through its persistence module.
 
-gpt2 is the smoke-test model, not the experience. Any HuggingFace causal LM works — instruct-tuned models automatically get their chat template and a rolling history. The engine ships NO authored persona: whatever character emerges is the model's own, surfaced by the live steering. (A caller may still pass their own system prompt explicitly.)
+### Activation-boundary migration
+
+New profiles use `activation_site="block_output"` and version 2. Extraction, baseline measurement, perception, and intervention now use the same zero-based block output, including at the final block. Earlier extraction used a different boundary through Hugging Face's `hidden_states` indexing. New steering defaults to the profiled block alone; neighboring blocks require separately justified calibration.
+
+The launcher automatically recalibrates outdated profiles and archives previous
+calibration files under `profiles/.archive/`. It also refreshes calibration when
+the recorded model revision/configuration or local checkpoint file metadata
+changes. This fingerprint uses file sizes and modification times, not a full
+content hash; use `--rebuild-profile` if you replaced weights while preserving
+that metadata. Explicit `--profile-path` selections are validated and never
+silently replaced. Existing latent memories cannot be converted by relabeling
+them: start fresh state after recalibration. `--resume` refuses a run that just
+rebuilt its profile, preserving the prior checkpoint. Tests use temporary profiles.
+New runtime checkpoints also record the exact calibration signature. A later
+launch cannot resume state from an older or different calibration by accident;
+checkpoints without that signature require a fresh start.
+
+## Experiments and evidence
+
+Run the offline mechanism tests (PyTorch, Transformers, and pytest required):
 
 ```bash
-# Qwen2.5-3B-Instruct is the server default (~6GB VRAM):
-python compare_server.py --profile
-
-# lighter / snappier voice loop (~3GB)
-python compare_server.py --model Qwen/Qwen2.5-1.5B-Instruct --profile
-
-# quick functional tests on a tiny model
-python compare_server.py --model gpt2 --profile
+python -m pytest tests_engine/test_research_contracts.py -q
+python -m pytest tests_engine -q
+python -m pytest primordium/tests -q
 ```
 
-Profile extraction is the only "training" — a few minutes of forward passes, once per model.
+The full engine suite includes tests using local GPT-2 weights. Set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` to prevent downloads; model-dependent tests skip if weights are unavailable.
 
----
-
-## A/B compare UI
-
-Side-by-side comparison of the raw model vs the engine-steered model. Same input, same model, same sampling — see what the engine does.
+A paired intervention pilot compares no steering, positive steering, negative steering, and several random directions of equal norm. It scores fixed target/contrast continuations, rather than judging steering by the same latent vector being injected:
 
 ```bash
-python compare_server.py --profile
-# Open http://127.0.0.1:5000
+python -m magnum_opus_v2.evaluate --model gpt2 --cases experiments/calm_pilot.jsonl --vector calm --output results/intervention.json
 ```
 
-Options:
-```bash
-python compare_server.py --model gpt2-medium --profile --port 5001
-```
+Reports contain per-case effects, descriptive bootstrap intervals, control seeds, dataset/vector hashes, software versions, and model revision metadata. The included eight cases are an authored pilot, not a validated psychological instrument; they confound calmness with deliberation and politeness. Do not tune on them and then call them a held-out test.
 
-The UI sends the same message to both columns. Over multi-turn conversations the engine column develops emotional continuity, memory, and character; the raw column resets each turn. The right-hand dashboard streams live over SSE at ~5Hz: the bus pulse (sparkline), imagined futures with probability/goodness bars and the back-of-mind penumbra, the self model (continuity, felt time, live time-dilation, leaking memory), the abstraction ladder with its developmental stage and named concepts, signed emotion bars, the four modulation channels, bus write provenance, the forecast ledger, the latest intrusive thought decoded to an actual word when token-sourced, executive speech pressure, and all four clocks.
+[The recorded GPT-2 pilot](experiments/results/gpt2_calm_pilot.json) and [research plan](docs/RESEARCH.md) describe the current evidence and the experiments needed before stronger claims. `benchmark.py` and the A/B interface remain exploratory diagnostics, not proof that the full architecture outperforms matched controls.
 
-Quick health check of the whole substrate on your hardware:
+## Interactive demonstrations
 
 ```bash
-python smoke_test.py            # 23 end-to-end checks, ~30s on gpt2
+python run.py
+# Research dashboard: http://127.0.0.1:5000/
+# Voxel face and browser voice: http://127.0.0.1:5000/face
+# Legacy face: http://127.0.0.1:5000/face2d
 ```
 
----
-
-## The face — talk to it
-
-```bash
-python compare_server.py --profile
-# Open http://127.0.0.1:5000/face   (Chrome or Edge for voice)
-```
-
-A **voxel human face** rendered by our own engine — raw WebGL, zero libraries, fully offline. The head is sculpted as an analytic heightfield (brow ridge, eye sockets, nose, lips, chin), quantized into ~5,000 stepped voxels at load, tagged with muscle-region weights (brows, eyelids, mouth corners, lips, jaw, cheeks, nose), and deformed **in the vertex shader every frame** by expression parameters driven by the live engine. It has **real eyes**: voxel eyeballs with sclera, an iris glowing in the current emotion color, and pupils that track your cursor ahead of the head turn — under sliding voxel eyelids that physically close over them when it blinks. Depth is sold hard: every voxel renders as a **fake-cube impostor** (lit top face, shadowed side, crisp seams), with baked ambient occlusion in the sockets and creases, depth fog on the receding sides, a slowly drifting key light, specular skin highlights, and a gentle idle sway (presence motion — disclosed as decorative, below). Debris voxels spall off and drift when the substrate is agitated; the old 2D plate face remains at `/face2d`.
-
-Every motion is either **signal-bound** (drawn from the live engine state) or **presence motion** (lifelike idle, explicitly decorative, disclosed in a footer line on the page). Nothing pretends to be data that isn't:
-
-*Signal-bound (a readout):*
-
-- **Color** is the dominant limbic emotion (calm blue, joy gold, fear violet, anger red…), cross-fading as the blend shifts.
-- **The face moves like a face**: joy pulls the mouth corners up and raises the cheeks; sadness knits the inner brows up and drops the corners and the gaze; anger lowers and knits the brows; fear and surprise widen the eyes and raise the brows; disgust scrunches the nose and lifts the upper lip; curiosity raises one brow and tilts the head. All muscle channels are smoothed for lifelike motion, never twitchy.
-- **Orbiting particles** are subconscious traffic: speed = bus velocity + reward, jitter = stress. Voxels spall off ∝ bus velocity (zero at rest); micro-jitter ∝ arousal (zero at rest).
-- **Words drift out of the head** — penumbra futures (violet), the chosen future, and intrusive thoughts, fading like things half-remembered. A flash of rays = a knowledge spark landing.
-- **Speaking opens the mouth** — amplitude follows the speaking state only. Browser TTS exposes no audio amplitude, so the face claims no lip-sync envelope.
-- **HUD**: developmental stage, self-continuity, felt time and live time-dilation, imagined futures with utilities, latent recall ("reminded of…"), the emotional field, and the four modulation channels.
-
-*Presence motion (decorative, disclosed in-page):*
-
-- It blinks (faster when aroused), breathes (rate follows arousal), sways gently, and turns toward your cursor with saccadic timing.
-
-*And the liveness contract:* every canvas motion is gated on a fresh stream. If the engine dies or disconnects, the face **freezes, greys out, and goes silent** within seconds — a dead engine visibly reads as dead. The ALIVE / ERROR / OFFLINE badge and the canvas always agree.
-
-**Voice**: click the mic once to open a **hands-free voice session** (like ChatGPT voice mode) — it listens, pauses while the AI thinks and speaks, then automatically listens again, until you click the mic off. The mic ring shows the state: red pulse = listening, amber = the AI has the floor. Replies are spoken with **pitch and rate modulated by the engine's actual emotional state** (its held positive states — calm, joy, curiosity — shape the voice), captioned as they're spoken. Hold SPACE for one-shot push-to-talk, or press SPACE while it's speaking to barge in — it never listens to its own voice.
-
----
-
-## Add it to your own bot
-
-The engine is **model-agnostic** — it extracts everything from whatever LLM you point it at — so you can mount it on any open-weight, self-hosted chatbot (Qwen, Kimi, Llama, Mistral, GPT-OSS, …) in three steps: extract a per-model profile, `V2Engine.from_profile(...)`, and route your turns through `engine.converse(...)`. It needs forward-pass access to the model's residual stream, so it works with models you run yourself (not closed API-only endpoints), and adoption is a developer's choice on models whose license permits it.
-
-**See [docs/INTEGRATION.md](docs/INTEGRATION.md) for the full guide.**
-
----
-
-## Benchmarks
-
-Quantitative comparison across four dimensions:
-
-```bash
-python benchmark.py --profile
-python benchmark.py --model gpt2-medium --profile --output results.json
-```
-
-| Benchmark              | Measures                                                                    |
-|------------------------|-----------------------------------------------------------------------------|
-| Emotional Coherence    | Lag-1 autocorrelation of emotion projections over a 10-turn scripted arc.   |
-| Emotional Continuity   | Area under the desperation-projection curve after a stimulus, across 5 neutral turns. |
-| Memory Recall          | Keyword presence in recall response after 5 distractor turns.               |
-| Response Diversity     | Pairwise Jaccard distance under 4 emotional states + target-emotion alignment. |
-
-Run `python benchmark.py` to get actual numbers for your hardware and model.
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                       THE V2 SUBSTRATE                            │
-│                                                                   │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │                      LatentBus                              │  │
-│  │   (continuous shared state; attractor dynamics; baseline)   │  │
-│  └─────────────────────────┬──────────────────────────────────┘  │
-│                            │ perturbations                        │
-│      ┌─────────────────────┼─────────────────────┐                │
-│      │                     │                     │                │
-│  ┌───┴───┐  ┌────────┐  ┌──┴───────────┐  ┌──────┴─────┐          │
-│  │Limbic │  │Temporal│  │Subconscious  │  │KnowledgeSpark│        │
-│  │(3-spd)│  │(subj t)│  │(4-layer L0-3)│  │   sparks    │         │
-│  └───────┘  └────────┘  └──────┬───────┘  └─────────────┘         │
-│      │           │             │ L2 survivors                     │
-│      │           │      ┌──────┴────────────┐                     │
-│      │           │      │ SpeculativeFutures │──► penumbra        │
-│      │           │      │ (imagine · P/B/R)  │    (back of mind)  │
-│      │           │      └───────────────────┘                     │
-│      └────┬──────┴──────┬───────┐                                 │
-│           │             │       │                                 │
-│  ┌────────┴──┐  ┌───────┴──────┐│ ┌──────────┐  ┌──────────┐      │
-│  │ Salience  │  │ Executive    ││ │ Memory   │  │DefaultMode│     │
-│  │(attention)│  │(speech urge) ││ │+ Confab. │  │(idle drift)│    │
-│  └───────────┘  └──────────────┘│ └────┬─────┘  └──────────┘      │
-│                                 │      │ leakage                  │
-│  ┌──────────────────┐  ┌────────┴──────┴───┐                      │
-│  │ AbstractionLadder │  │     SelfModel     │                     │
-│  │ (2→4→8→16 concepts│  │ (identity · felt  │                     │
-│  │  unlock w/ age)   │  │  time · leakage)  │                     │
-│  └──────────────────┘  └───────────────────┘                      │
-│                                                                   │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │              NeuromodState                                  │  │
-│  │   (stress, reward, calm, arousal)           │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  Multi-rate FlowRunner clocks (model passes never stall flow):    │
-│    flow 50ms · perception 200ms · expensive 1.5s · slow 30s       │
-└──────────────────────────┬───────────────────────────────────────┘
-                           │ live: every token's forward pass
-                           ▼ reads bus.state at that instant
-┌──────────────────────────────────────────────────────────────────┐
-│                  FROZEN BASE LLM                                  │
-│  Base weights never modified. The model's own latent geometry     │
-│  contains emotion concepts; the substrate steers along them.      │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-The engine hooks into a transformer layer's forward pass via `SteeringHook`. At every flow tick:
-
-1. Each region reads the bus + neuromod state.
-2. Regions return perturbations (limbic emits emotion-weighted blends of profile vectors; temporal emits recency/urgency; subconscious emits the L3 intrusive; sparks emit token-embedding flares; speculation emits the chosen future plus the faint penumbra; the self model emits identity pull and memory echo).
-3. The bus integrates them under attractor + velocity dynamics.
-4. During generation the hook runs in live-provider mode: **every token's forward pass** calls `BusSteeringDriver.read()` and adds the current `bus.state * steering_strength` to the target layer's hidden states. The substrate keeps ticking throughout — heavy regions run off-thread and skip their turn rather than ever blocking your conversation.
-5. After generation, memory captures the moment.
-
----
-
-## How it works
-
-The engine provides specific capabilities that a frozen LLM cannot provide for itself. Each maps to a concrete latent-space operation. For the full theoretical framework with Anthropic's empirical foundations, see [PAPER.md](PAPER.md).
-
-**Emotions as latent space currents.** LLMs already have emotion vectors (Anthropic reported 171). Limbic steers them with biological dynamics: onset rates, decay rates, interaction effects, homeostasis, modulation-channel gain.
-
-**Perception in latent space too.** When you send a message, the engine doesn't keyword-match it — it runs the message through the model, projects the mid-layer hidden state onto the extracted emotion vectors relative to the profile's neutral baseline, and stimulates Limbic with what the model itself *felt* in the text. (A keyword list survives only as a fallback if that pass fails.)
-
-**Time as a living dimension.** The magnitude of subjective time is derived from internal state changes — residual fade, emotional drift, step count, memory-importance decay. Not everything escapes the wall clock, though: interaction freshness, the executive's post-speech cooldown, and the Now's confidence are exponential decays over `time.monotonic()`, and they sit on decision paths — freshness suppresses and gates speech pressure, the cooldown blocks back-to-back autonomous turns, and confidence scales how hard the situation pulls the bus.
-
-**Substrate continuity.** The `LatentBus` integrates region perturbations under attractor pull and velocity damping. The result is path-dependent steering: where you are now reflects every perturbation that came before, smoothed over the bus's velocity time-constant.
-
-**Subconscious as structured filtering.** Random exploration of latent space at L0, filtered by resonance with the current moment at L1/L2, with a surprise channel that occasionally promotes the unexpected. The output reaches the model only through the bus, gated by salience.
-
-**Memory as latent traces.** Stored bus states from significant moments (high velocity or divergence). The false-memory confabulator interpolates real memories on the slow clock; the subconscious cannot distinguish — that's the design point.
-
-**Communicative pressure.** Executive accumulates pressure from bus divergence + velocity, modulated by reward and gated by post-speech silence. When pressure crosses the effective threshold, the engine emits an autonomous turn.
-
-**Imagination with consequences.** Speculation runs ON THE LIVE SITUATION: candidate futures (seeded from the subconscious, the trajectory, a memory, the situation vector itself, and a wildcard) are each *lived* as a short sampled rollout on the actual recent conversation tokens — futures are phrases, imagined continuations of the moment. Each is scored by probability (the model's own confidence in the chain) and goodness (how far the rollout's own hidden states move toward the model's positive-emotion directions vs a neutral baseline — read from geometry, not from any word list). The most promising future steers; the plausible-but-unchosen linger in the penumbra at low gain; a good imagined future moves reward. The engine never manufactures fear from a bad imagined future — it holds only positive emotions. Tell it you're driving beside a cliff and it will UNDERSTAND the danger while its own state stays calm and helpful (`python cliff_test.py` runs exactly that acceptance test: perceive the danger, hold no fear).
-
-**Perception feeds learning.** Every user message and every reply is read by the model itself (mid-layer hidden state) and that world-content vector goes three places: the abstraction ladder (it learns about reality, not just its own mood), episodic memory (experience traces alongside feeling traces), and latent recall — the situation is matched against the past and the best memory perturbs the bus ("reminded of…", live in the UI, false memories included).
-
-**Thought moves feeling while speaking.** During generation the primary hook periodically feeds the model's own evolving hidden state back into the bus (small, clipped) — the traffic loop is closed in both directions, not just at idle. Steering is also injected at the target layer's neighbors at reduced strength. Before answering, the engine *ruminates*: a few silent passes over the context whose thoughts perturb the bus, so the reply starts from a mind that has already reacted (no tokens decoded, ~100ms).
-
-**Consolidation (sleep-work).** On the slow clock, the highest-importance memories are replayed into the abstraction ladder (rehearsal), and periodically the most-lived-in concept is distilled into a bus attractor — repeated experience literally becomes a standing disposition of the mind.
-
-**Emergent event timing.** Knowledge sparks, the surprise channel, and confabulation are not scheduled: they are charge/pressure processes fed by reward, bus motion, novelty, idleness, and memory churn, firing when accumulated state crosses a jittered threshold — the same pattern as speech pressure.
-
-**The Now — a persistent model of the present.** `SituationModel` holds what is happening right now in two forms: a latent situation vector that each message either assimilates into or, when it doesn't resonate, scene-shifts (with an arousal orienting spike), and a one-sentence present-tense narrative **the model writes itself** after every turn ("The user drives alone at night along a narrow mountain road near a steep cliff without a guardrail"). Situations persist between messages with staleness-decaying confidence, and while confident the Now gently pulls the bus — the felt pressure of being somewhere. Speculation consumes it to imagine in three modes: **speech** (the conversation's continuation), **world** ("…What happens next:"), and **user** ("…The user will probably") — so the engine predicts events and the user's next action, not just next words. Mode tags ([S]/[W]/[U]) and the NOW sentence are live in the face HUD.
-
-**The Mirror (M1) — an invisible skeleton, extracted, not authored.** The LLM's pretraining forced it to master the temporal shape of human feeling — how fast fear rises, how slowly grief releases, what relief does to residual dread — rules nobody ever wrote down. `mirror.py` extracts them: scripted emotional arcs are fed to the model beat by beat, its hidden states are projected onto the emotion vectors (after removing the hidden space's dominant narrative-drift axes, which otherwise drown the signal), and the engine's emotional constants — onset rates, decay rates, homeostatic baselines, the full cross-emotion interaction matrix — are FITTED from the model's own implied trajectories. The fitted skeletons are different per model and consistently structured (in both shipped profiles fear and anger are among the fastest-releasing emotions while grief lingers far longer — in gpt2 it decays slowest of all — and both encode the relief arc as a coupling: `desperate→calm` +0.26 in gpt2, +0.30 in Qwen). Runs automatically in `profile create`; retrofit an existing profile with `python -m magnum_opus_v2.profile dynamics <model>`. When a profile carries a mirror, the fitted values replace every hand-authored onset rate, decay rate, baseline, and interaction weight; the three-speed scaffolding — fast/medium/slow onset and decay multipliers, channel blend weights, and min/max clamps in `_dynamics.py` — remains authored.
-
-**Understanding built the way children build it.** The abstraction ladder clusters lived experience online, coarse before fine, with deeper levels gated behind accumulated experience. Perception is then gently pulled toward the concept it was filed under — what the system understands shapes what it feels next. Novelty against its deepest known concept is felt curiosity.
-
-**A self made of leaking memory.** The self model keeps a slow identity average the present is drawn back toward, lets the recent past echo into the substrate every tick, and reads the gap between echo and now as time flowing. Felt time is the integral of experienced change, not the wall clock — the dashboard shows the live dilation between the two.
-
----
-
-## Project structure
-
-```
-magnum_opus_v2/             # The engine package
-  __init__.py               # Public API
-  engine.py                 # V2Engine — orchestrator
-  bus.py                    # LatentBus — continuous shared state
-  flow.py                   # FlowRunner — multi-rate clocks
-  neuromod.py               # NeuromodState — four functional modulation channels
-  steering_hook.py          # SteeringHook + BusSteeringDriver
-  region.py                 # Region base class
-  config.py                 # BusConfig, ClockConfig, V2Config
-  _dynamics.py              # MultiSpeedEmotionalState + TemporalEngine
-  prompts.py                # Contrastive prompt pairs for extraction
-  extraction.py             # Vector extraction via activation differencing
-  mirror.py                 # M1 — fit emotion dynamics from the model's own prior
-  loader.py                 # HuggingFace causal LM loader
-  profile.py                # Save/load per-model profiles
-  regions/
-    limbic.py               # Pillar 1 — emotion engine
-    temporal.py             # Pillar 1 — subjective time
-    subconscious.py         # Pillar 2 — four-layer stack
-    speculative.py          # Pillar 3 — contextual future rollouts (P/goodness) + penumbra
-    abstraction.py          # Pillar 3 — developmental coarse-to-fine concepts (intero+exteroception)
-    self_model.py           # Pillar 3 — identity, felt time, memory leakage
-    consolidation.py        # Pillar 3 — replay, rehearsal, dispositions (sleep-work)
-    memory.py               # Memory + FalseMemoryConfabulator
-    salience.py             # Attention gating
-    executive.py            # Speech-pressure threshold
-    default_mode.py         # Idle silent forward passes
-    knowledge_sparks.py     # Curiosity wandering
-
-compare_server.py           # Web server: A/B view, face experience, SSE stream
-templates/compare.html      # A/B research dashboard
-templates/voxel.html        # The face — voxel WebGL presence, served at /face
-templates/face.html         # Legacy 2D face, served at /face2d
-benchmark.py                # Quantitative comparison suite
-smoke_test.py               # End-to-end liveness test (python smoke_test.py)
-cliff_test.py               # Acceptance test: does it think about the fall?
-demo_v2.py                  # Full integration demo (idle/talk/stress/auto)
-profiles/                   # Saved per-model profiles (gitignored)
-
-PAPER.md                    # Full theoretical framework
-```
-
----
-
-## Configuration
-
-All tunable parameters live in [`magnum_opus_v2/config.py`](magnum_opus_v2/config.py) and [`magnum_opus_v2/_dynamics.py`](magnum_opus_v2/_dynamics.py):
-
-- **BusConfig** — attractor strength, velocity damping, noise scale, max norm, max attractors, initial temperature.
-- **ClockConfig** — periods for the four clocks: flow (50ms), perception (200ms), expensive (1.5s), slow (30s).
-- **EmotionConfig / EMOTION_CONFIGS** — onset rate, decay rate, homeostatic baseline, min/max per emotion.
-- **EMOTION_INTERACTIONS** — hand-authored cross-emotion interaction matrix, used only as a fallback: when the profile carries Mirror dynamics (`dynamics.json`), the engine loads the interaction matrix fitted from the model's implied emotional trajectories instead.
-- **TemporalConfig** — weights blending the five subjective-time signals.
-- Region-level knobs live on each region's `__init__` (`SubconsciousStack`, `Executive`, `Salience`, `Memory`, `FalseMemoryConfabulator`, `KnowledgeSparks`, `DefaultMode`, `SpeculativeFutures` — futures count, imagination strength, penumbra gain/floor, P/B/R weights; `AbstractionLadder` — level sizes, unlock schedule, grounding gain; `SelfModel` — identity tau, leak gain, felt-time scale).
-- Regions can be disabled per-engine: `V2Engine.from_profile(..., enable_speculative=False, enable_abstraction=False, enable_self_model=False, enable_default_mode=False, enable_knowledge_sparks=False)`.
-
----
-
-## The full theory
-
-This project is built on a detailed theoretical framework grounded in Anthropic's reported emotion-vector research. PAPER.md is a speculative design essay — mechanisms are claimed only where measured (see the Reality Contract in primordium/README.md and the wired effects above); the essay covers:
-
-- Why LLMs are "the language center without the rest of the brain"
-- How each cognitive principle maps to a concrete latent-space operation
-- The (speculative) traffic hypothesis of consciousness and why substrate continuity matters
-- Alignment through mutualistic emotional dynamics rather than suppression
-- The path toward self-organizing engine architectures
-
-**Read the full framework: [PAPER.md](PAPER.md)**
-
----
-
-## Citation
-
-```bibtex
-@misc{hourmand2026magnumopusvitalis,
-  author = {Hourmand, Alan},
-  title = {Magnum Opus Vitalis: The Engine Over the Ocean -- A Latent Space Architecture for Human-Like AI},
-  year = {2026},
-  howpublished = {\url{https://github.com/spectrallogic/MagnumOpusVitalis}},
-  note = {A framework integrating Anthropic's emotion vector research into a latent space manipulation architecture for developmental AI}
-}
-```
-
----
-
-*Alan Hourmand*
-
-*With thanks to Anthropic's interpretability team, whose work turned theory into possibility.*
-
-<a href="https://www.buymeacoffee.com/alanhourmand" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="32" width="170"></a>
+The launcher asks which local model to use; `--model gpt2` selects the smaller
+smoke-test model. The dashboard exposes affect, modulation, memory, intrusive
+candidates, and speculative futures. Browser voice and decorative face motion
+are presentation features, not evidence of experience. Snapshot data includes
+recursive search depth, parent/child records, budgets, and score semantics;
+the existing visual future cards show only terminal alternatives.
+
+## Two research tracks
+
+- **`magnum_opus_v2/`**: the main engine-over-LLM architecture described here. This is the path for testing the two core ideas with pretrained language models.
+- **[Primordium](primordium/README.md)**: a separate experimental learner with perception, online learning, memory, and growth. It shares substrate components but does not establish the LLM-engine thesis. Its tests and claims must be evaluated separately.
+
+[PAPER.md](PAPER.md) preserves the motivating design essay. [The research plan](docs/RESEARCH.md) records falsifiable claims, limitations, and a route toward independent academic replication. The goal is a useful, reproducible research contribution; scientific acceptance and historical significance have to be earned by results.

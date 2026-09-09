@@ -158,6 +158,7 @@ class V2Engine:
         # Speech callback
         on_should_speak=None,
     ) -> "V2Engine":
+        profile.validate_activation_site()
         cfg = config or V2Config(hidden_dim=profile.hidden_dim, device=device)
 
         bus = LatentBus(profile.hidden_dim, device=device, config=cfg.bus)
@@ -284,6 +285,13 @@ class V2Engine:
                 rollout_tokens=cfg.spec.rollout_tokens,
                 rollout_budget_ms=cfg.spec.rollout_budget_ms,
                 chained_continuation_tokens=cfg.spec.chained_continuation_tokens,
+                max_depth=cfg.spec.max_depth,
+                branching_factor=cfg.spec.branching_factor,
+                beam_width=cfg.spec.beam_width,
+                max_nodes=cfg.spec.max_nodes,
+                max_total_tokens=cfg.spec.max_total_tokens,
+                round_budget_ms=cfg.spec.round_budget_ms,
+                discount=cfg.spec.discount,
             )
             penumbra = speculative.penumbra_companion()
 
@@ -480,8 +488,8 @@ class V2Engine:
                 for f in self.speculative.last_futures:
                     if f.get("chosen"):
                         chosen = {k: f.get(k) for k in
-                                  ("word", "mode", "probability", "benefit",
-                                   "risk", "utility")}
+                                  ("word", "mode", "probability", "goodness",
+                                   "depth", "id", "utility")}
                         break
             blend = self.limbic.snapshot().get("blended", {})
             dominant = max(blend, key=lambda k: blend[k]) if blend else None
@@ -539,10 +547,9 @@ class V2Engine:
         enc = self.tokenizer(
             text, return_tensors="pt", truncation=True, max_length=96,
         ).to(self.device)
-        with self.model_lock:
-            with torch.no_grad():
-                out = self.model(**enc, output_hidden_states=True)
-        return out.hidden_states[self.profile.target_layer].mean(dim=1).squeeze(0).float()
+        from magnum_opus_v2.extraction import read_block_output
+        with self.model_lock, self.hook.isolated():
+            return read_block_output(self.model, enc, self.profile.target_layer)
 
     def perceive_emotions(self, text: str) -> Dict[str, float]:
         """The real sense organ: run the message through the model and
@@ -559,6 +566,8 @@ class V2Engine:
         self._last_percept = h
         if h is None:
             return {}
+        if self.speculative is not None:
+            self.speculative.ledger.resolve(h)
         base = self.profile.baseline.projections or {}
         deltas: Dict[str, float] = {}
         for name, vec in self.profile.vectors.items():
@@ -1065,7 +1074,7 @@ class V2Engine:
             except Exception:  # noqa: BLE001
                 subc_snap["intrusive_word"] = None
         else:
-            subc_snap["intrusive_word"] = None
+            subc_snap["intrusive_word"] = meta.get("phrase") if isinstance(meta, dict) else None
 
         return {
             "bus":          self.bus.snapshot(),

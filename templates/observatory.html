@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1113">
+  <title>Vitalis — Mind Observatory</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='observatory.css') }}">
+  <script src="{{ url_for('static', filename='observatory.js') }}" defer></script>
+</head>
+<body data-connection="connecting">
+<a class="skip-link" href="#workspace">Skip to observatory</a>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Vitalis home"><span class="brand-mark">✳</span> VITALIS <span class="brand-sub">MIND OBSERVATORY</span></a>
+  <nav aria-label="Experiences"><a class="current" href="/" aria-current="page">Observatory</a><a href="/compare">Compare</a><a href="/face">Face <span>↗</span></a></nav>
+  <div class="connection" role="status"><i></i><span id="connection-label">Connecting</span></div>
+</header>
+<main id="workspace">
+  <section class="intro">
+    <div><div class="eyebrow">MAGNUM OPUS VITALIS / LIVE SESSION</div><h1>A mind, in motion<span>.</span></h1><p>Follow the currents that shape the next response.</p></div>
+    <div class="session-meta"><span class="eyebrow">LANGUAGE MODEL</span><strong id="model-name">Waiting for engine</strong><span id="session-clock">Session — · — ticks</span></div>
+  </section>
+  <div id="connection-notice" class="notice" hidden role="status"></div>
+  <div class="observatory-grid">
+    <aside class="state-column" aria-label="Internal state">
+      <section class="state-section affect-section">
+        <div class="section-title"><h2>Affective state</h2><span class="mini-dot"></span></div>
+        <div class="affect-orbit"><svg viewBox="0 0 200 150" aria-hidden="true"><circle cx="100" cy="76" r="59" class="orbit-track"/><circle cx="100" cy="76" r="47" class="orbit-inner"/><path id="affect-arc" d="M 100 17 A 59 59 0 1 1 99.9 17" pathLength="100"/></svg><div><strong id="dominant-affect">Unobserved</strong><span>dominant activation</span></div></div>
+        <div id="affect-bars" class="meter-list"><p class="empty small">Emotion measurements will appear here.</p></div>
+      </section>
+      <section class="state-section"><div class="section-title"><h2>Modulation</h2><span class="subtle">4 channels</span></div><div id="modulation-bars" class="meter-list"></div><p class="microcopy">Functional signals shaping the engine.</p></section>
+      <section class="state-section"><div class="section-title"><h2>Behavior now</h2></div><div class="behavior-line"><i id="behavior-dot"></i><strong id="behavior-name">Waiting for activity</strong></div><p id="behavior-reason" class="muted">Behavior is inferred from measured events and thresholds.</p><div class="pressure-track"><span id="pressure-fill"></span><i id="pressure-threshold"></i></div><div class="stat-caption"><span>Urge to speak</span><span id="pressure-value">— / —</span></div></section>
+      <section class="state-section quiet-stats"><div><span>Self continuity</span><strong id="continuity-value">—</strong></div><div><span>Memory traces</span><strong id="memory-value">—</strong></div><div><span>Background cadence</span><strong id="cadence-value">—</strong></div></section>
+    </aside>
+    <section class="center-column" aria-label="Cognition visualizations">
+      <div class="view-toolbar"><div class="view-tabs" role="tablist" aria-label="Cognition views"><button id="tab-map" role="tab" aria-selected="true" aria-controls="view-map" data-view="map">Mind map</button><button id="tab-futures" role="tab" aria-selected="false" tabindex="-1" aria-controls="view-futures" data-view="futures">Future branches <span id="branch-count">0</span></button><button id="tab-memory" role="tab" aria-selected="false" tabindex="-1" aria-controls="view-memory" data-view="memory">Memory</button></div><button class="icon-button" id="pause-view" aria-pressed="false" title="Pause the visualization; the engine keeps running" aria-label="Pause visualization">Ⅱ</button></div>
+      <div class="visual-stage">
+        <section id="view-map" role="tabpanel" aria-labelledby="tab-map">
+          <div class="stage-caption"><span class="eyebrow">THE COGNITIVE CIRCUIT</span><span id="map-status">Awaiting signals</span></div>
+          <div class="circuit" id="circuit">
+            <svg class="circuit-wires" viewBox="0 0 700 470" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="wire-glow"><stop stop-color="#70cfc2" stop-opacity=".1"/><stop offset=".55" stop-color="#70cfc2"/><stop offset="1" stop-color="#70cfc2" stop-opacity=".1"/></linearGradient></defs><g class="wire-base"><path d="M120 93 C200 93 225 210 350 225"/><path d="M580 93 C495 93 480 208 350 225"/><path d="M110 235 C180 235 240 225 350 225"/><path d="M590 235 C520 235 440 225 350 225"/><path d="M170 382 C170 320 255 300 350 225"/><path d="M530 382 C530 320 425 290 350 225"/><path d="M170 382 C265 435 430 435 530 382"/></g><g class="wire-signals"><path data-wire="affect" d="M120 93 C200 93 225 210 350 225"/><path data-wire="memory" d="M580 93 C495 93 480 208 350 225"/><path data-wire="sea" d="M110 235 C180 235 240 225 350 225"/><path data-wire="expression" d="M590 235 C520 235 440 225 350 225"/><path data-wire="peaks" d="M170 382 C170 320 255 300 350 225"/><path data-wire="imagination" d="M530 382 C530 320 425 290 350 225"/></g></svg>
+            <button class="region region-affect" data-region="affect"><span class="region-symbol">◒</span><span class="region-name">Affect</span><span class="region-value" id="region-affect-value">—</span></button>
+            <button class="region region-memory" data-region="memory"><span class="region-symbol">▤</span><span class="region-name">Memory</span><span class="region-value" id="region-memory-value">— traces</span></button>
+            <button class="region region-sea" data-region="sea"><span class="region-symbol">≈</span><span class="region-name">Noise sea</span><span class="region-value" id="region-sea-value">Proposals below awareness</span></button>
+            <button class="region region-expression" data-region="expression"><span class="region-symbol">⌁</span><span class="region-name">Expression</span><span class="region-value" id="region-expression-value">Waiting to speak</span></button>
+            <button class="region region-peaks" data-region="peaks"><span class="region-symbol">⋀</span><span class="region-name">Associative peaks</span><span class="region-value" id="region-peaks-value">— candidates</span></button>
+            <button class="region region-imagination" data-region="imagination"><span class="region-symbol">⑂</span><span class="region-name">Imagination</span><span class="region-value" id="region-imagination-value">— paths explored</span></button>
+            <button class="bus-core" data-region="bus" aria-label="Inspect the latent bus"><canvas id="field-canvas" aria-hidden="true"></canvas><span class="core-label">LATENT BUS</span><strong id="bus-magnitude">—</strong><span class="core-caption">shared inner state</span></button>
+          </div>
+          <div class="map-legend"><span><i class="legend-dot mint"></i>Measured influence</span><span><i class="legend-dot lavender"></i>Imagined possibility</span><span>Click any region to inspect</span></div>
+        </section>
+        <section id="view-futures" role="tabpanel" aria-labelledby="tab-futures" hidden><div class="stage-caption"><span class="eyebrow">RECURSIVE IMAGINATION</span><span id="search-budget">No completed search</span></div><p class="view-description">Each branch continues a possible future. Follow a path to see how later consequences change its score.</p><div id="future-tree" class="future-tree"><p class="empty">Future branches appear when the background model completes a search.</p></div><div class="tree-legend"><span class="tag mint">Chosen path</span><span class="tag lavender">Imagined</span><span>Scores are selection heuristics.</span></div></section>
+        <section id="view-memory" role="tabpanel" aria-labelledby="tab-memory" hidden><div class="stage-caption"><span class="eyebrow">TRACES OF EXPERIENCE</span><button class="text-button" id="refresh-memory">Refresh ↻</button></div><p class="view-description">What persists, what resurfaces, and what was constructed.</p><div class="memory-tools"><input id="memory-search" aria-label="Search memory traces" placeholder="Find a trace…"><select id="memory-filter" aria-label="Memory type"><option value="all">All traces</option><option value="observed">Observed</option><option value="imagined">Imagined</option><option value="confabulated">Confabulated</option></select></div><div id="memory-grid" class="memory-grid"><p class="empty">Memory traces will appear as the engine runs.</p></div></section>
+      </div>
+      <div class="thought-ribbon"><span class="ribbon-mark">↗</span><div><span class="eyebrow">SURFACING NOW</span><p id="surfacing-thought">Waiting for a candidate to reach the upper layer.</p></div><span class="tag" id="surfacing-source">—</span></div>
+      <section class="conversation"><div class="section-title"><h2>Conversation</h2><span id="conversation-status" class="subtle">Your words become part of the context</span></div><div id="conversation-list" class="conversation-list" role="log" aria-label="Conversation" aria-live="polite"><div class="conversation-empty"><span>Begin a conversation.</span> Watch what changes inside.</div></div><form id="conversation-form"><label class="sr-only" for="message-input">Message Vitalis</label><textarea id="message-input" rows="1" maxlength="8000" placeholder="What’s on your mind?" required></textarea><button id="send-message" type="submit" aria-label="Send message">↑</button></form><p class="compose-hint">Enter to send · Shift + Enter for a new line <span>Live engine · frozen model weights</span></p></section>
+    </section>
+    <aside class="activity-column" aria-label="Inspection and activity">
+      <section class="inspector"><div class="section-title"><h2 id="inspector-heading">Inside the latent bus</h2><span class="tag" id="inspector-tag">MEASURED</span></div><p id="inspector-description">The shared state combines influences from the engine’s regions and steers the model’s next computation.</p><div id="inspector-metrics" class="inspector-metrics"></div><div id="influence-list"></div><p class="microcopy" id="inspector-note">A map of the software architecture, not a scan of biological neurons.</p></section>
+      <section class="activity-section" id="timeline"><div class="section-title"><h2>Activity stream</h2><span class="subtle" id="event-count">0 events</span></div><div class="event-filters" role="group" aria-label="Filter activity"><button data-filter="all" aria-pressed="true">All</button><button data-filter="thought" aria-pressed="false">Thoughts</button><button data-filter="affect" aria-pressed="false">Affect</button><button data-filter="behavior" aria-pressed="false">Behavior</button></div><div id="activity-feed" class="activity-feed"><p class="empty small">Listening for events from the engine.</p></div></section>
+      <button class="export-button" id="export-session">↓ Export session &amp; current state</button>
+    </aside>
+  </div>
+  <footer><span><i class="legend-dot mint"></i>Live measurements. Illustrative geometry. No simulated telemetry.</span><span>VITALIS / OBSERVATORY 01</span></footer>
+</main>
+</body>
+</html>

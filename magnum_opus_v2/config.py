@@ -51,13 +51,22 @@ class ClockConfig:
 
 @dataclass
 class SpeculativeConfig:
-    """How deeply the engine imagines. Rollouts use the frozen LLM as a
-    forward simulator of reality; deeper rollouts read that predictor
-    harder, bounded so they never steal latency from a live user turn."""
+    """Hypothetical rollouts with cooperative compute limits.
+
+    Depth counts recursively conditioned events; rollout_tokens counts
+    tokens per event. One in-flight forward can exceed the time budget.
+    """
     n_futures: int = 4
     rollout_tokens: int = 14          # imagined depth (was 6): futures are phrases
     rollout_budget_ms: float = 250.0  # wall-clock cap on one candidate's rollout
     chained_continuation_tokens: int = 8  # WORLD mode reads its own trajectory further
+    max_depth: int = 2
+    branching_factor: int = 2
+    beam_width: int = 2
+    max_nodes: int = 12
+    max_total_tokens: int = 128
+    round_budget_ms: float = 500.0
+    discount: float = 0.8
 
 
 @dataclass

@@ -1,45 +1,15 @@
-"""
-SpeculativeFutures — parallel future prediction, scored by goodness.
+"""Bounded recursive imagination, with fast replay of selected hypotheses.
 
-Design: predict possible futures in parallel, in realtime; sort by
-probability and GOODNESS; discard the rest — except that the
-somewhat-plausible are retained in a lower-value bandwidth the mind is
-aware of but does not think about, like an intrusive thought.
+The expensive worker explores a beam of sampled event continuations.
+Children receive the parent's generated context and residual change.
+Discounted path utility combines token-chain confidence with an authored
+positive-affect proxy. Neither score establishes truth or ethical value.
 
-Mechanism, per expensive tick (~1.5s), and only when the model is idle
-(try-lock — user generation always wins):
-
-  1. GATHER candidate future directions:
-       - the subconscious L2 survivors (what's bubbling up right now)
-       - the velocity extrapolation ("if this keeps going")
-       - a memory trace ("what if the past repeats")
-       - one wildcard noise direction
-  2. IMAGINE each candidate: a silent multi-token SAMPLED rollout steered
-     by bus.state + candidate — the model briefly *lives* that future,
-     several words of it.
-  3. SCORE each imagined future:
-       probability — geometric mean of the sampled tokens' probabilities
-                     along the rollout (chain confidence). A future the
-                     model finds likely is one it walks without stumbling.
-       goodness    — how far the rollout's own mid-layer states move TOWARD
-                     the model's positive-emotion directions vs a neutral
-                     baseline, in [-1, 1]. Positive-only: there is no threat
-                     term — a future is judged by its alignment with good,
-                     not by any danger it carries. goodness_min tracks the
-                     trough (the least-aligned moment along the trajectory).
-       utility     = w_p·prob + w_b·goodness   (an unaligned future lowers
-                     its own utility, so no separate risk term is needed)
-  4. SORT by utility. The winner perturbs the bus (the chosen future pulls
-     the present toward it). Runners-up above the plausibility floor are
-     RETAINED in the penumbra — a low-gain channel emitted faintly every
-     flow tick and decaying over seconds: known, not attended. The rest
-     are discarded.
-
-Feedback: a good winner bumps reward (anticipation). The engine never
-manufactures a negative feeling from a bad imagined future — it holds
-only positive emotions; instead, field_goodness (the worst-aligned moment
-imagined this round) tells the alignment gate when to steer back toward
-good.
+The winner perturbs the bus; the upper subconscious layer receives tagged
+hypotheses, and plausible alternatives linger in the penumbra. Model calls
+are isolated from the speech-feedback tap until explicit selection.
+The shared model lock serializes generation and imagination. Budgets are
+cooperative; an in-flight forward can delay a waiting generation request.
 """
 
 import threading
@@ -53,6 +23,7 @@ import torch.nn.functional as F
 from magnum_opus_v2.bus import LatentBus
 from magnum_opus_v2.region import Region
 from magnum_opus_v2.regions.subconscious import SubconsciousStack
+from magnum_opus_v2.imagination import search_futures
 
 POSITIVE_EMOTIONS = ("joy", "trust", "calm", "curious")
 
@@ -93,6 +64,13 @@ class SpeculativeFutures(Region):
         penumbra_gain: float = 0.08,         # how loud the unattended futures are
         w_probability: float = 0.4,
         w_benefit: float = 0.35,
+        max_depth: int = 2,
+        branching_factor: int = 2,
+        beam_width: int = 2,
+        max_nodes: int = 12,
+        max_total_tokens: int = 128,
+        round_budget_ms: float = 500.0,
+        discount: float = 0.8,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -136,6 +114,17 @@ class SpeculativeFutures(Region):
         self.penumbra_gain = float(penumbra_gain)
         self.w_p = float(w_probability)
         self.w_b = float(w_benefit)
+        self.max_depth = int(max_depth)
+        self.branching_factor = int(branching_factor)
+        self.beam_width = int(beam_width)
+        self.max_nodes = int(max_nodes)
+        self.max_total_tokens = int(max_total_tokens)
+        self.round_budget_ms = float(round_budget_ms)
+        self.discount = float(discount)
+        self.last_search = {}
+        self.rollout_failures = 0
+        self.last_rollout_error = None
+        self.last_attempt_tokens = 0
 
         # Full per-emotion vectors + neutral baseline — the latent affect
         # reader for imagined futures (same convention as perception).
@@ -198,6 +187,12 @@ class SpeculativeFutures(Region):
             "field_goodness": round(self.field_goodness, 3),
             "over_budget": self.over_budget,
             "rollout_tokens_used": round(self.rollout_tokens_used, 1),
+            "search": self.last_search,
+            "rollout_failures": self.rollout_failures,
+            "last_rollout_error": self.last_rollout_error,
+            "score_semantics": {"probability": "token_chain_confidence",
+                                "goodness": "positive_affect_proxy",
+                                "utility": "discounted_path_heuristic"},
         }
 
     # ------------------------------------------------------------------
@@ -208,65 +203,70 @@ class SpeculativeFutures(Region):
         if not candidates:
             return None
 
-        # The user's generation always has priority — never block it.
+        # Skip if another operation owns the model; do not queue behind it.
         if not self.model_lock.acquire(blocking=False):
             with self._lock:
                 self.skipped_busy += 1
             return None
+        w_g = self.w_b
+        if neuromod is not None and hasattr(neuromod, "reward_boost"):
+            w_g *= neuromod.reward_boost(scale=0.4)
         try:
             base_state = bus.state.detach().clone()
-            # Per-mode stages (speech / world / user). Each future's valence
-            # is read from the rollout's own mid-layer states projected onto
-            # the extracted emotion vectors vs the neutral baseline.
             seeds: Dict[str, torch.Tensor] = {}
-            scored = []
-            for source, vec, mode in candidates[: self.n_futures]:
-                if mode not in seeds:
-                    seeds[mode] = self._seed_for_mode(mode)
-                result = self._imagine(base_state, vec, seeds[mode], mode=mode)
-                if result is None:
-                    continue
-                scored.append({
-                    "source": source, "vec": vec, "mode": mode,
-                    "probability": result["probability"],
-                    "goodness": result["goodness"],
-                    "goodness_min": result["goodness_min"],
-                    "tokens_used": result["tokens_used"],
-                    "over_budget": result["over_budget"],
-                    "name": result["phrase"],
-                })
+
+            def rollout(seed, parent, deadline, remaining_tokens):
+                source, direction, mode = seed
+                if parent is None:
+                    if mode not in seeds:
+                        seeds[mode] = self._seed_for_mode(mode)
+                    context = seeds[mode]
+                else:
+                    # The next imagined event depends on what actually emerged
+                    # in the parent, both its tokens and its residual change.
+                    context = parent["context_ids"]
+                    direction = parent["vec"]
+                result = self._imagine(base_state, direction, context, mode=mode,
+                                       deadline=deadline, max_tokens=remaining_tokens)
+                if result is not None:
+                    result.update(source=source, mode=mode, name=result["phrase"])
+                    return result
+                return {"failed": True, "tokens_used": self.last_attempt_tokens}
+
+            def evaluate(result, seed):
+                p_cal = self.ledger.calibrated(result["probability"], seed[2])
+                result["probability_cal"] = p_cal
+                p = p_cal if p_cal is not None else result["probability"]
+                return self.w_p * p + w_g * result["goodness"]
+
+            search = search_futures(
+                candidates[:self.n_futures], rollout, evaluate,
+                max_depth=self.max_depth, branching_factor=self.branching_factor,
+                beam_width=self.beam_width, max_nodes=self.max_nodes,
+                max_tokens=self.max_total_tokens,
+                budget_s=self.round_budget_ms / 1000.0, discount=self.discount,
+            )
+            scored = search.leaves
+            with self._lock:
+                self.last_search = {
+                    "attempts": search.attempts, "nodes": len(search.nodes),
+                    "tokens": search.tokens, "budget_exhausted": search.budget_exhausted,
+                    "depth_reached": max((n["depth"] for n in search.nodes), default=0),
+                    "tree": [{k: n[k] for k in ("id", "parent_id", "depth", "name",
+                                                "utility", "local_utility", "epistemic_type")}
+                             for n in search.nodes],
+                }
         finally:
             self.model_lock.release()
 
         if not scored:
             return None
 
-        # Neuromod tilts the scoring: reward chases goodness harder.
-        w_g = self.w_b
-        if neuromod is not None and hasattr(neuromod, "reward_boost"):
-            w_g *= neuromod.reward_boost(scale=0.4)
-
-        # resolve due forecasts against what the situation actually
-        # became, then rank the new crop by what "likely" has MEASURABLY
-        # meant (calibrated probability) once the ledger has earned an
-        # opinion; raw chain confidence until then
-        reality = None
-        if self.situation_provider is not None:
-            try:
-                reality = self.situation_provider()
-            except Exception:  # noqa: BLE001
-                reality = None
-        self.ledger.resolve(reality)
-        for f in scored:
-            p_cal = self.ledger.calibrated(f["probability"], f["mode"])
-            f["probability_cal"] = p_cal
-            p_eff = p_cal if p_cal is not None else f["probability"]
-            # goodness is in [-1, 1], so an unaligned future lowers utility
-            # on its own — no separate risk term needed.
-            f["utility"] = self.w_p * p_eff + w_g * f["goodness"]
-        scored.sort(key=lambda f: -f["utility"])
         winner, rest = scored[0], scored[1:]
+        # Resolution belongs to fresh external perception, never an idle
+        # reread of the same situation that seeded the forecast.
         self.ledger.record(scored, tick=bus.tick_count)
+        self.subc.publish_futures(scored)
 
         # Retain plausible runners-up in the penumbra; discard the rest —
         # a promising future lingers in awareness (keyed on utility).
@@ -284,13 +284,9 @@ class SpeculativeFutures(Region):
             self.penumbra.sort(key=lambda p: -p["weight"])
             del self.penumbra[6:]
 
-        # Chemistry AND feeling react to what was imagined, not just to
-        # A good imagined future rewards for real; the engine does NOT
-        # manufacture fear from an imagined bad one — it holds only positive
-        # emotions. field_goodness is the WORST-aligned moment imagined this
-        # round (the trough), the signal the alignment gate reads to steer
-        # back toward good.
-        field_goodness = float(min(f["goodness_min"] for f in scored))
+        # Selected positive-affect projections can raise the reward channel.
+        # The trough feeds affect regulation; it is not an external harm score.
+        field_goodness = float(min(f["goodness_min"] for f in search.nodes))
         self.field_goodness = field_goodness
         if neuromod is not None and hasattr(neuromod, "bump"):
             if winner["goodness"] > 0.15 and winner["utility"] > 0:
@@ -298,8 +294,7 @@ class SpeculativeFutures(Region):
 
         with self._lock:
             self.rounds_total += 1
-            self.over_budget += sum(1 for f in scored if f.get("over_budget"))
-            used = [f.get("tokens_used", 0) for f in scored]
+            used = [f.get("tokens_used", 0) for f in search.nodes]
             self.rollout_tokens_used = float(np.mean(used)) if used else 0.0
             self.last_futures = [
                 {
@@ -314,6 +309,8 @@ class SpeculativeFutures(Region):
                     "goodness_min": round(f["goodness_min"], 3),
                     "utility": round(f["utility"], 3),
                     "chosen": f is winner,
+                    "id": f["id"], "parent_id": f["parent_id"],
+                    "depth": f["depth"], "epistemic_type": "hypothesis",
                 }
                 for f in scored
             ]
@@ -434,11 +431,11 @@ class SpeculativeFutures(Region):
         return self._context_seed()
 
     def _goodness_of(self, h: torch.Tensor) -> float:
-        """How GOOD a mid-layer state is: does it move toward the model's
-        own positive-emotion directions or away from them? In [-1, 1]:
-        +1 strongly toward good, -1 strongly away. Positive-only — there is
-        no threat term; a future is scored by its alignment with good, not
-        by any danger it carries."""
+        """Signed positive-affect projection proxy in [-1, 1].
+
+        Dividing by the sum of absolute deltas discards magnitude; this is
+        a heuristic, not a calibrated measure of preference or welfare.
+        """
         if h is None or not self._emo_vecs:
             return 0.0
         pos_deltas = [
@@ -451,116 +448,97 @@ class SpeculativeFutures(Region):
         return sum(pos_deltas) / mag
 
     def _imagine(
-        self,
-        base_state: torch.Tensor,
-        direction: torch.Tensor,
-        seed: Optional[torch.Tensor] = None,
-        mode: str = "world",
+        self, base_state: torch.Tensor, direction: torch.Tensor,
+        seed: Optional[torch.Tensor] = None, mode: str = "world",
+        deadline: Optional[float] = None, max_tokens: Optional[int] = None,
     ) -> Optional[dict]:
-        """LIVE the candidate future: a sampled rollout on the given stage
-        under candidate steering, using the frozen LLM as a forward
-        simulator of reality. The future is a PHRASE scored against that
-        stage's unimagined baseline. Bounded by a wall-clock budget so a
-        deep rollout never steals latency from a live user turn. Returns a
-        dict {probability, goodness, goodness_min, phrase, tokens_used}
-        or None."""
-        steer = (base_state.to(self.device)
-                 + direction * self.imagination_strength)
+        """Sample one hypothetical event, with no direct feedback into the bus.
+
+        Return the generated context and residual change so a child can
+        condition on its parent. Token confidence and affect are heuristics;
+        neither establishes truth, welfare, or external-world probability.
+        """
+        steer = base_state.to(self.device) + direction.to(self.device) * self.imagination_strength
+        self.last_attempt_tokens = 0
         if seed is None:
             seed = self._context_seed()
-
-        # WORLD mode reads its own trajectory further — the world-predictor
-        # is where the "extract reality from the LLM" thesis pays off.
-        depth = self.rollout_tokens
-        if mode == "world":
-            depth += self.chained_continuation_tokens
-        budget_s = self.rollout_budget_ms / 1000.0
-
-        self.hook.set_steering(steer)
-        rollout_h = None
+        depth = self.rollout_tokens + (self.chained_continuation_tokens if mode == "world" else 0)
+        if max_tokens is not None:
+            depth = min(depth, max_tokens)
+        # Reserve room for the entire event in models with absolute positions.
+        limit = getattr(self.model.config, "max_position_embeddings", None)
+        if limit is None:
+            limit = getattr(self.model.config, "n_positions", 1024)
+        depth = min(depth, max(0, int(limit) - 1))
+        if depth < 1:
+            return None
+        seed = seed[:, -max(1, int(limit) - depth):]
+        stop_at = time.monotonic() + self.rollout_budget_ms / 1000.0
+        if deadline is not None:
+            stop_at = min(stop_at, deadline)
+        ids, logps, captured = [], [], []
         over = False
         try:
-            with torch.no_grad():
-                t0 = time.monotonic()
+            with self.hook.isolated(steer, capture=True), torch.no_grad():
+                if time.monotonic() >= stop_at:
+                    self.over_budget += 1
+                    return None
                 out = self.model(seed, use_cache=True)
-                first_logits = out.logits[0, -1].detach().float()
-
-                # Rollout — the imagined event, token by token, steering
-                # held the whole way. Capture each step's mid-layer hidden
-                # state: the latent trace of LIVING this future.
+                # Subtract this event's own context boundary, rather than
+                # steering directly with an unrelated input embedding.
+                context_h = self.hook.captured_states[-1][0, -1].float()
                 self.hook.clear()
-                self.hook.capture_enabled = True
                 past = out.past_key_values
-                ids: list = []
-                logps: list = []
-                cur_logits = first_logits
+                logits = out.logits[0, -1].float()
                 for _ in range(depth):
-                    if time.monotonic() - t0 >= budget_s:
-                        over = True            # deep enough is bounded enough
+                    if time.monotonic() >= stop_at:
+                        over = True
                         break
-                    step_logp = F.log_softmax(cur_logits, dim=-1)
-                    # Sampled, not greedy — greedy collapses every candidate
-                    # onto the same dominant continuation; imagination must
-                    # be able to diverge.
-                    probs = F.softmax(cur_logits / 0.9, dim=-1)
-                    top = torch.topk(probs, k=50)
-                    pick = int(torch.multinomial(
-                        top.values / top.values.sum(), 1).item())
+                    logp = F.log_softmax(logits, dim=-1)
+                    probs = F.softmax(logits / 0.9, dim=-1)
+                    top = torch.topk(probs, k=min(50, probs.numel()))
+                    pick = int(torch.multinomial(top.values / top.values.sum(), 1).item())
                     tok = int(top.indices[pick])
                     if tok in self._special_ids:
                         break
                     ids.append(tok)
-                    logps.append(float(step_logp[tok]))
-                    step_out = self.model(
-                        torch.tensor([[tok]], device=self.device),
-                        past_key_values=past, use_cache=True,
-                    )
-                    past = step_out.past_key_values
-                    cur_logits = step_out.logits[0, -1].detach().float()
-                captured = [c[0, -1].detach().float()
+                    self.last_attempt_tokens = len(ids)
+                    logps.append(float(logp[tok]))
+                    out = self.model(torch.tensor([[tok]], device=self.device),
+                                     past_key_values=past, use_cache=True)
+                    past = out.past_key_values
+                    logits = out.logits[0, -1].float()
+                captured = [c[0, -1].detach().float().to(self.device)
                             for c in self.hook.captured_states]
-                if captured:
-                    rollout_h = torch.stack(captured).mean(dim=0).to(self.device)
-        except Exception:  # noqa: BLE001 — never crash the substrate
+        except Exception as exc:
+            self.rollout_failures += 1
+            self.last_rollout_error = f"{type(exc).__name__}: {exc}"
             return None
         finally:
-            self.hook.set_steering(None)
-            self.hook.capture_enabled = False
-            self.hook.clear()
-
-        if not ids:
+            if over:
+                self.over_budget += 1
+        if not ids or not captured:
             return None
-        try:
-            phrase = self.tokenizer.decode(ids, skip_special_tokens=True)
-        except Exception:  # noqa: BLE001
-            phrase = ""
-        phrase = " ".join(phrase.split())[:48].strip() or "…"
-
-        # probability — the model's own confidence in this imagined chain
-        # (geometric mean of chosen-token probabilities).
-        probability = float(np.exp(np.mean(logps))) if logps else 0.0
-
-        # ---- LATENT goodness, MULTI-POINT along the trajectory: the mean
-        # alignment-with-good, plus the TROUGH (goodness_min) — a future
-        # that dips away from good mid-way still shows it, which is the
-        # signal the alignment gate reads to steer back toward good.
-        goodness = goodness_min = 0.0
-        if captured and self._emo_vecs:
-            per = [self._goodness_of(h.to(self.device)) for h in captured]
-            goodness = float(np.mean(per))
-            goodness_min = float(np.min(per))
-        elif rollout_h is not None:
-            goodness = goodness_min = self._goodness_of(rollout_h)
-
-        # valence is read purely from the model's own geometry (no lexicon)
+        predicted_state = torch.stack(captured).mean(dim=0)
+        delta = predicted_state - context_h.to(self.device)
+        if not torch.isfinite(delta).all():
+            self.rollout_failures += 1
+            self.last_rollout_error = "nonfinite rollout state"
+            return None
+        # A degenerate residual change has no inferred direction; retain
+        # the proposal as an explicitly hypothetical fallback.
+        vec = delta if delta.norm() > 1e-6 else direction.to(self.device)
+        vec = vec / (vec.norm() + 1e-8)
+        phrase = " ".join(self.tokenizer.decode(ids, skip_special_tokens=True).split())[:96] or "…"
+        per = [self._goodness_of(h) for h in captured]
         return {
-            "probability": probability,
-            "goodness": goodness,
-            "goodness_min": goodness_min,
-            "phrase": phrase,
-            "tokens_used": len(ids),
-            "over_budget": over,
+            "probability": float(np.exp(np.mean(logps))),
+            "goodness": float(np.mean(per)), "goodness_min": float(np.min(per)),
+            "phrase": phrase, "tokens_used": len(ids), "over_budget": over,
+            "vec": vec, "predicted_state": predicted_state,
+            "context_ids": torch.cat((seed, torch.tensor([ids], device=self.device)), dim=1),
         }
+
 
 class SpeculativePenumbra(Region):
     """Flow-clock companion: emits the retained-but-unattended futures at
