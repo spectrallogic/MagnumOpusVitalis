@@ -14,11 +14,42 @@
   let current = null, pending = null, session = null, lastReceived = 0, lastTickAt = 0, lastTick = null;
   let paused = false, busy = false, view = 'map', selection = {type:'region', key:'bus'};
   let events = [], eventIds = new Set(), filter = 'all', memories = [], lastMemoryFetch = 0;
-  let treeKey = '', source = null, connection = 'connecting', lastFetchError = '', phase = 0;
+  let treeKey = '', source = null, connection = 'connecting', lastFetchError = '';
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const instrument = VitalisResonance.mount($('field-canvas'), {
+    active: () => connection === 'live' && !paused && !document.hidden && view === 'map',
+    onTelemetry: t => {
+      const s=t.snapshot;
+      text('band-count',s.latent_bands?.rms?.length);
+      text('field-velocity',fmt(s.bus?.velocity_norm,3));
+      text('write-count',Object.values(s.bus_provenance||{}).reduce((n,p)=>n+num(p.writes),0));
+      $('clock-key').replaceChildren(...VitalisResonance.clocks.map((c,i)=>{
+        const item=node('div','clock-channel');
+        item.append(node('span','clock-index',`0${i+1}`),node('span','',c.label),node('strong','',t.counts[i]===null?'Unavailable':`${fmt(t.rates[i],1)} ${c.key==='model'?'passes':'cycles'}/s`),node('small','',`${c.hz} Hz`));
+        return item;
+      }));
+    }
+  });
+  $('sound-toggle').addEventListener('click',async()=>{
+    const button=$('sound-toggle');
+    if(instrument.sound.enabled){instrument.sound.enabled=false;instrument.sound.silence();}
+    else {
+      button.disabled=true;
+      try{await instrument.sound.enable();}
+      catch(e){text('sound-status',e.message);return;}
+      finally{button.disabled=false;}
+    }
+    button.setAttribute('aria-pressed',instrument.sound.enabled);
+    button.textContent=instrument.sound.enabled?'Mute hum':'Enable hum';
+    text('sound-status',instrument.sound.enabled?'Listening enabled · tones follow new clock cycles and LLM layer passes.':'Sound is off. Tones follow clock cycles and LLM layer passes.');
+  });
+  $('sound-volume').addEventListener('input',e=>instrument.sound.setVolume(Number(e.target.value)/100));
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)instrument.halt();});
+
 
   function setConnection(mode, detail) {
     connection = mode;
+    if(mode !== 'live') instrument.halt();
     document.body.dataset.connection = mode;
     const names = {connecting:'Connecting', live:'Engine live', stalled:'Engine stalled', offline:'Disconnected', error:'Engine error'};
     text('connection-label', names[mode] || mode);
@@ -26,7 +57,6 @@
     $('connection-notice').hidden = !message;
     text('connection-notice', message);
     $('send-message').disabled = busy || mode !== 'live';
-    if (mode !== 'live') document.querySelectorAll('[data-wire]').forEach(e => e.dataset.active = 'false');
   }
 
   async function request(url, options = {}) {
@@ -38,6 +68,7 @@
   }
 
   function resetSession(id) {
+    instrument.reset();
     session = id; events = []; eventIds.clear(); memories = []; treeKey = ''; lastTick = null;
     current = null; pending = null; selection = {type:'region', key:'bus'};
     $('conversation-list').replaceChildren();
@@ -103,6 +134,7 @@
 
   function render(s) {
     current = s;
+    instrument.accept(s);
     const bus = s.bus || {}, sub = s.subconscious || {}, spec = s.speculative || {}, ex = s.executive || {};
     const affect = dominant(s), [bName, bReason] = behavior(s);
     text('model-name', s.runtime?.model || 'Connected model');
@@ -131,13 +163,6 @@
     text('branch-count', spec.search?.nodes ?? 0);
     text('surfacing-thought', sub.intrusive_meta?.phrase || sub.intrusive_word || (sub.intrusive_source ? `A ${sub.intrusive_source.replaceAll('_',' ')} candidate is influencing the state.` : 'Waiting for a candidate to reach the upper layer.'));
     text('surfacing-source', sub.intrusive_meta?.epistemic || sub.intrusive_source || '—');
-    const sources = {affect:['limbic'], memory:['self_model','consolidation'], sea:['subconscious_stack'], peaks:['subconscious_stack'], imagination:['speculative_futures','speculative_penumbra'], expression:['thought_feedback']};
-    document.querySelectorAll('[data-wire]').forEach(e => {
-      e.dataset.active = String(connection === 'live' && sources[e.dataset.wire].some(k => {
-        const p = s.bus_provenance?.[k];
-        return p && num(p.mean_norm) > .00001 && num(bus.tick_count) - num(p.last_clock) < 30;
-      }));
-    });
     if (view === 'futures') renderTree();
     if (view === 'memory' && performance.now() - lastMemoryFetch > 5000) loadMemory();
     renderInspector(); renderEvents(); drawField();
@@ -154,6 +179,11 @@
   };
 
   function inspect(type, value) {
+    if(document.querySelector('.observatory-grid').classList.contains('field-expanded')) {
+      document.querySelector('.observatory-grid').classList.remove('field-expanded');
+      $('expand-field').setAttribute('aria-pressed',false);
+      $('expand-field').setAttribute('aria-label','Expand field');
+    }
     selection = {type, ...(type === 'region' ? {key:value} : {value})};
     document.querySelectorAll('[data-region]').forEach(e => e.classList.toggle('selected', type === 'region' && e.dataset.region === value));
     renderInspector();
@@ -329,34 +359,13 @@
   function selectView(next, focus=false) {
     if(!['map','futures','memory'].includes(next))return;
     view=next;
+    if(next!=='map')instrument.halt();
     document.querySelectorAll('[data-view]').forEach(b=>{const selected=b.dataset.view===next;b.setAttribute('aria-selected',selected);b.tabIndex=selected?0:-1;if(selected&&focus)b.focus();});
     ['map','futures','memory'].forEach(k=>$(`view-${k}`).hidden=k!==next);
     history.replaceState(null,'',next==='map'?location.pathname:`#${next}`);
     if(next==='futures'&&current)renderTree();if(next==='memory'){renderMemories();loadMemory();}if(next==='map')drawField();
   }
-  function drawField() {
-    const canvas=$('field-canvas'),box=canvas.getBoundingClientRect();if(!box.width)return;
-    const ratio=Math.min(devicePixelRatio||1,2);canvas.width=box.width*ratio;canvas.height=box.height*ratio;
-    const c=canvas.getContext('2d');if(!c)return;c.scale(ratio,ratio);
-    const size=box.width,cx=size/2,cy=box.height/2,velocity=clamp(num(current?.bus?.velocity_norm)/4),magnitude=clamp(num(current?.bus?.state_norm)/8);
-    if(!reducedMotion.matches&&connection==='live'&&!paused)phase=num(current?.bus?.tick_count)*.018;
-    const glow=c.createRadialGradient(cx,cy,size*.12,cx,cy,size*.49);glow.addColorStop(0,'#68baa715');glow.addColorStop(.65,'#68baa718');glow.addColorStop(1,'#68baa700');c.fillStyle=glow;c.fillRect(0,0,size,box.height);
-    for(let ring=0;ring<7;ring++){
-      c.beginPath();
-      for(let j=0;j<=160;j++){
-        const a=j/160*Math.PI*2, base=size*(.31+ring*.018);
-        const wave=(Math.sin(a*3+phase+ring*.22)+Math.cos(a*5-phase*.5+ring*.1))*(1+velocity*4);
-        const r=base+wave;
-        const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
-        j?c.lineTo(x,y):c.moveTo(x,y);
-      }
-      c.closePath();c.strokeStyle=`rgba(146,217,190,${.12+ring*.065+magnitude*.06})`;c.lineWidth=ring===6?1:.65;c.stroke();
-    }
-    for(let i=0;i<12;i++){
-      const a=i/12*Math.PI*2+phase*.07,r=size*.46;
-      c.beginPath();c.arc(cx+Math.cos(a)*r,cy+Math.sin(a)*r, i%3===0?1.5:.8,0,Math.PI*2);c.fillStyle='#74b5a98c';c.fill();
-    }
-  }
+  function drawField() { instrument.draw(); }
 
   function connect() {
     source=new EventSource('/api/stream');
@@ -372,9 +381,15 @@
   });
   document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(f=>f.setAttribute('aria-pressed',f===b));renderEvents();}));
   $('pause-view').addEventListener('click',()=>{
+    instrument.halt();
     paused=!paused;document.body.classList.toggle('view-paused',paused);$('pause-view').setAttribute('aria-pressed',paused);
     $('pause-view').setAttribute('aria-label',paused?'Resume visualization':'Pause visualization');text('pause-view',paused?'▷':'Ⅱ');
     if(!paused&&pending){render(pending);if(view==='memory')renderMemories();}
+  });
+  $('expand-field').addEventListener('click',()=>{
+    const expanded=document.querySelector('.observatory-grid').classList.toggle('field-expanded');
+    $('expand-field').setAttribute('aria-pressed',expanded);
+    $('expand-field').setAttribute('aria-label',expanded?'Restore panels':'Expand field');
   });
   $('refresh-memory').addEventListener('click',loadMemory);$('memory-search').addEventListener('input',renderMemories);$('memory-filter').addEventListener('change',renderMemories);
   $('conversation-form').addEventListener('submit',sendMessage);
@@ -387,7 +402,7 @@
   window.addEventListener('hashchange',()=>selectView(location.hash.slice(1)||'map'));
   new ResizeObserver(()=>{drawField();drawTreeEdges();}).observe($('circuit'));
   window.addEventListener('resize',drawTreeEdges);
-  window.addEventListener('pagehide',()=>source?.close());
+  window.addEventListener('pagehide',()=>{source?.close();instrument.halt();});
   window.addEventListener('pageshow',e=>{if(e.persisted)connect();});
   setInterval(()=>{
     const now=performance.now();

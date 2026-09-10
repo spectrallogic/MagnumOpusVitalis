@@ -1150,4 +1150,5 @@ class V2Engine:
             "alignment_gate": self.alignment_gate.snapshot(),
             "recall":       self._last_recall,
             "flow_metrics": self.flow.metrics,
+            "model_compute": {"primary_layer_passes": self.hook.primary_layer_passes},
         }

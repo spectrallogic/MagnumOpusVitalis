@@ -62,6 +62,9 @@ class SteeringHook:
         self.feedback_enabled = True   # generate_raw() and external
         self._fb_count = 0             # measurement passes disable this
         self._handles: List = []       # so they never perturb the bus
+        # Counts observed primary-layer hook calls, including unsteered passes.
+        # Python metadata only: no activation copy or GPU synchronization.
+        self.primary_layer_passes = 0
 
     def set_steering(self, vector: Optional[torch.Tensor]) -> None:
         """Static steering vector. Clears any live provider."""
@@ -99,6 +102,9 @@ class SteeringHook:
             is_tensor = isinstance(output, torch.Tensor)
             is_tuple = isinstance(output, tuple)
             hidden_states = output if is_tensor else output[0]
+
+            if primary:
+                self.primary_layer_passes += 1
 
             if primary and self.capture_enabled:
                 self.captured_states.append(hidden_states.detach().clone())

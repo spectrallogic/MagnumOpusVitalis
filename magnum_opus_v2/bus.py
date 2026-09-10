@@ -299,6 +299,26 @@ class LatentBus:
         ).item()
         return 1.0 - cs
 
+    def visual_bands(self, count: int = 48) -> dict:
+        """Lossy coordinate summary for the UI, computed only on UI requests.
+
+        Bands are contiguous bus coordinates, not semantic features or neurons.
+        Copy under the bus lock; reduce on CPU after releasing it.
+        """
+        count = max(1, min(int(count), self.hidden_dim, 96))
+        with self._lock:
+            state = self.state.detach().clone()
+            tick = self.tick_count
+        state = state.float().cpu()
+        bands = torch.tensor_split(state, count)
+        return {
+            "kind": "contiguous_coordinate_rms",
+            "dimensions": self.hidden_dim,
+            "tick": tick,
+            "rms": [float(b.square().mean().sqrt()) for b in bands],
+            "mean": [float(b.mean()) for b in bands],
+        }
+
     def snapshot(self) -> dict:
         return {
             "state_norm": float(self.state.norm()),

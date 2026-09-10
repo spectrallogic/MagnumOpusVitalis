@@ -61,6 +61,8 @@ def _json_safe(value):
 
 def _snapshot():
     state = engine.snapshot()
+    if hasattr(engine, "bus"):
+        state["latent_bands"] = engine.bus.visual_bands()
     state["runtime"] = {"session_id": _session_id,
                         "model": engine.profile.model_name if engine.profile else "unknown",
                         "device": str(engine.device), "server_time": time.time()}
